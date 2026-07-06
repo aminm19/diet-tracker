@@ -9,7 +9,9 @@
     "build": "pnpm --filter server build && pnpm --filter client build",
     "test": "vitest run",
     "typecheck": "pnpm --filter shared typecheck && pnpm --filter server typecheck && pnpm --filter client typecheck",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "db:generate": "pnpm --filter server db:generate",
+    "db:migrate": "pnpm --filter server db:migrate"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
