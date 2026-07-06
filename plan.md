@@ -26,9 +26,11 @@ Git init, `.gitignore` (node_modules, .env, .neon, dist, .DS_Store), project roo
 
 ### Unit 3 — Food data service (USDA + OFF)
 Server-side `services/foodSearch.ts`: query USDA FDC and Open Food Facts, normalize both into a common shape (name, brand, per-100g macros/calories, sugar, sodium, NOVA group if available, source+external_id), upsert into `foods` cache table, dedupe by source+external_id. `GET /api/foods/search?q=`, `GET /api/foods/:id`, both Zod-validated.
-**Acceptance**: hitting `/api/foods/search?q=chicken` returns real merged USDA+OFF results and populates `foods`; repeat search reuses cache instead of re-fetching unchanged rows.
+**Acceptance**: hitting `/api/foods/search?q=chicken` returns real merged USDA+OFF results and populates `foods`; repeat search dedupes on write (upserts by `source`+`external_id` instead of creating duplicate rows).
+**Note**: implemented as write-side dedup only — every search still re-hits both upstream APIs; it does not skip the network call for already-cached queries (read-side caching). Fine for a low-traffic single-user app; revisit as a future unit if USDA/OFF rate limits or latency become a problem.
 **Out of scope**: client UI, barcode lookup.
 **Blocked until**: USDA FDC API key is in `.env`.
+**Follow-up units logged**: guard `foods` API response with Zod validation before returning to client (tech debt, minor); consider read-side cache hit-avoidance if upstream rate limits bite.
 
 ### Unit 4 — Log CRUD API
 `POST /api/logs`, `GET /api/logs?date=`, `PATCH /api/logs/:id`, `DELETE /api/logs/:id`. Snapshots macros/calories from the resolved food + amount at creation time. Zod validation on all bodies/params/query.
