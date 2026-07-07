@@ -2,9 +2,8 @@ import type { Goals, LogTotals } from "shared";
 import { DateNav } from "./DateNav";
 import { MacroProgress } from "./MacroProgress";
 
-// `Goals` (calories/protein/carbs/fat) mirrors the `goals` table — no goals
-// API exists yet (Unit 6), so the caller passes `null` for now. Once Unit 6
-// ships, it can pass the real fetched goals here unchanged.
+// `goals` is `null` until the user has set any (see `App.tsx`'s `getGoals()`
+// fetch) — components below degrade to a no-goal display in that case.
 interface DaySummaryProps {
   date: string;
   onDateChange: (date: string) => void;

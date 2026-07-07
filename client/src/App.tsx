@@ -1,23 +1,38 @@
-import { Plus } from "@phosphor-icons/react";
-import { useState } from "react";
+import { PencilSimple, Plus } from "@phosphor-icons/react";
+import { useEffect, useState } from "react";
 import type { Goals } from "shared";
 import { AddFoodModal } from "./components/AddFoodModal";
 import { DaySummary } from "./components/DaySummary";
 import { EntryList } from "./components/EntryList";
+import { GoalsModal } from "./components/GoalsModal";
 import { useDailyLog } from "./hooks/useDailyLog";
+import { getGoals } from "./lib/api";
 import { todayString } from "./lib/date";
 
 function App() {
   const [date, setDate] = useState(todayString());
   const [modalOpen, setModalOpen] = useState(false);
+  const [goalsModalOpen, setGoalsModalOpen] = useState(false);
 
   const { status, entries, totals, error, reload, addEntryLocally, updateEntryLocally, removeEntryLocally } =
     useDailyLog(date);
 
-  // No goals API exists yet (Unit 6). `DaySummary`/`MacroProgress` already
-  // support a real `Goals` value here — Unit 6 just needs to fetch
-  // `GET /api/goals` and pass the result in place of `null`.
-  const goals: Goals | null = null;
+  const [goals, setGoals] = useState<Goals | null>(null);
+
+  // Fetched once on mount — goals aren't scoped to `date`, unlike the daily
+  // log. Saving in `GoalsModal` updates this locally (no refetch needed),
+  // mirroring `useDailyLog`'s optimistic-update pattern for log entries.
+  useEffect(() => {
+    const controller = new AbortController();
+    getGoals(controller.signal)
+      .then(setGoals)
+      .catch(() => {
+        // Goals are a soft-fail feature (DaySummary already renders a "no
+        // goals" fallback) — silently keep `goals` at its initial `null`
+        // rather than surfacing a page-level error for this.
+      });
+    return () => controller.abort();
+  }, []);
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-10 sm:px-6 sm:py-14">
@@ -25,7 +40,20 @@ function App() {
         Diet Tracker
       </p>
 
-      <DaySummary date={date} onDateChange={setDate} totals={totals} goals={goals} />
+      <div className="flex flex-col gap-3">
+        <DaySummary date={date} onDateChange={setDate} totals={totals} goals={goals} />
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={() => setGoalsModalOpen(true)}
+            className="flex items-center gap-1.5 rounded-full px-1 text-xs font-medium text-muted transition-colors hover:text-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+          >
+            <PencilSimple size={13} weight="light" aria-hidden="true" />
+            {goals ? "Edit goals" : "Set goals"}
+          </button>
+        </div>
+      </div>
 
       <section className="flex flex-col gap-5">
         <div className="flex items-center justify-between">
@@ -54,6 +82,10 @@ function App() {
 
       {modalOpen && (
         <AddFoodModal date={date} onClose={() => setModalOpen(false)} onAdded={addEntryLocally} />
+      )}
+
+      {goalsModalOpen && (
+        <GoalsModal goals={goals} onClose={() => setGoalsModalOpen(false)} onSaved={setGoals} />
       )}
     </main>
   );

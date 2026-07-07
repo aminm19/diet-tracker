@@ -5,6 +5,7 @@ import type {
   CreateLogRequest,
   Food,
   GetLogsResponse,
+  Goals,
   LogEntry,
   UpdateLogRequest,
 } from "shared";
@@ -78,4 +79,15 @@ export function updateLog(id: number, body: UpdateLogRequest): Promise<LogEntry>
 
 export function deleteLog(id: number): Promise<void> {
   return request<void>(`/api/logs/${id}`, { method: "DELETE" });
+}
+
+export function getGoals(signal?: AbortSignal): Promise<Goals | null> {
+  return request<Goals | null>("/api/goals", { signal });
+}
+
+export function updateGoals(goals: Goals): Promise<Goals> {
+  return request<Goals>("/api/goals", {
+    method: "PUT",
+    body: JSON.stringify(goals),
+  });
 }

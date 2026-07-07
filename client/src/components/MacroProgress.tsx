@@ -1,8 +1,6 @@
-// Renders a single macro's progress. When `goal` is omitted/null (no goals
-// API yet — Unit 6), falls back to a clean raw-number display with an
-// unfilled track instead of a progress bar with nothing to fill against.
-// Unit 6 can pass a real `goal` into this same component and the fill
-// activates automatically — no rewrite needed.
+// Renders a single macro's progress. When `goal` is omitted/null (goals not
+// set yet), falls back to a clean raw-number display with an unfilled track
+// instead of a progress bar with nothing to fill against.
 interface MacroProgressProps {
   label: string;
   value: number;
