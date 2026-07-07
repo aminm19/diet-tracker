@@ -3,8 +3,9 @@
 // change on update) so later corrections to `foods` never rewrite history.
 import { eq } from "drizzle-orm";
 import type { Food, LogEntry, LogTotals, LogUnit } from "shared";
-import { foodLogs } from "shared";
+import { computeLogTotals, foodLogs } from "shared";
 import { db } from "../db/client.js";
+import { numericToString, stringToNumber } from "../db/numeric.js";
 import { getFoodById } from "./foodSearch.js";
 
 const OZ_TO_GRAMS = 28.3495;
@@ -55,10 +56,6 @@ function computeSnapshot(food: Food, amount: number, unit: LogUnit): Snapshot {
   };
 }
 
-function numericToString(value: number | null): string | null {
-  return value === null ? null : value.toString();
-}
-
 function rowToLogEntry(row: typeof foodLogs.$inferSelect): LogEntry {
   return {
     id: row.id,
@@ -70,8 +67,8 @@ function rowToLogEntry(row: typeof foodLogs.$inferSelect): LogEntry {
     protein: Number(row.protein),
     carbs: Number(row.carbs),
     fat: Number(row.fat),
-    sugar: row.sugar === null ? null : Number(row.sugar),
-    sodium: row.sodium === null ? null : Number(row.sodium),
+    sugar: stringToNumber(row.sugar),
+    sodium: stringToNumber(row.sodium),
   };
 }
 
@@ -122,16 +119,7 @@ export interface LogsForDate {
 export async function getLogsByDate(date: string): Promise<LogsForDate> {
   const rows = await db.select().from(foodLogs).where(eq(foodLogs.loggedDate, date));
   const entries = rows.map(rowToLogEntry);
-
-  const totals = entries.reduce<LogTotals>(
-    (acc, entry) => ({
-      calories: acc.calories + entry.calories,
-      protein: acc.protein + entry.protein,
-      carbs: acc.carbs + entry.carbs,
-      fat: acc.fat + entry.fat,
-    }),
-    { calories: 0, protein: 0, carbs: 0, fat: 0 },
-  );
+  const totals = computeLogTotals(entries);
 
   return { entries, totals };
 }

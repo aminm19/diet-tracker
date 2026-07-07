@@ -62,6 +62,21 @@ export const logTotalsSchema = z.object({
 });
 export type LogTotals = z.infer<typeof logTotalsSchema>;
 
+// Reduces a day's log entries into calorie/macro totals. Shared by the
+// server (`getLogsByDate`) and the client (`useDailyLog`'s optimistic
+// add/update/delete recompute) so both sides sum the same way.
+export function computeLogTotals(entries: LogEntry[]): LogTotals {
+  return entries.reduce<LogTotals>(
+    (acc, entry) => ({
+      calories: acc.calories + entry.calories,
+      protein: acc.protein + entry.protein,
+      carbs: acc.carbs + entry.carbs,
+      fat: acc.fat + entry.fat,
+    }),
+    { calories: 0, protein: 0, carbs: 0, fat: 0 },
+  );
+}
+
 export const getLogsResponseSchema = z.object({
   entries: z.array(logEntrySchema),
   totals: logTotalsSchema,

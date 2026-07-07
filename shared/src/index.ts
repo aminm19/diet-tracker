@@ -5,3 +5,4 @@ export const SHARED_SCAFFOLD_MARKER = "diet-tracker-shared" as const;
 export * from "./schema.js";
 export * from "./food.js";
 export * from "./log.js";
+export * from "./goals.js";

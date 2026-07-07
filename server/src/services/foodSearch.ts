@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import type { Food, FoodSource, NormalizedFoodInput } from "shared";
 import { foods } from "shared";
 import { db } from "../db/client.js";
+import { numericToString, stringToNumber } from "../db/numeric.js";
 
 const USDA_SEARCH_URL = "https://api.nal.usda.gov/fdc/v1/foods/search";
 const OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl";
@@ -207,10 +208,6 @@ async function searchOff(query: string): Promise<FoodUpsertInput[]> {
 
 // --- Cache (upsert into `foods`) ---
 
-function numericToString(value: number | null): string | null {
-  return value === null ? null : value.toString();
-}
-
 function rowToFood(row: typeof foods.$inferSelect): Food {
   return {
     id: row.id,
@@ -218,14 +215,14 @@ function rowToFood(row: typeof foods.$inferSelect): Food {
     externalId: row.externalId,
     name: row.name,
     brand: row.brand,
-    servingSize: row.servingSize === null ? null : Number(row.servingSize),
+    servingSize: stringToNumber(row.servingSize),
     servingUnit: row.servingUnit,
     caloriesPer100g: Number(row.caloriesPer100g),
     proteinPer100g: Number(row.proteinPer100g),
     carbsPer100g: Number(row.carbsPer100g),
     fatPer100g: Number(row.fatPer100g),
-    sugarPer100g: row.sugarPer100g === null ? null : Number(row.sugarPer100g),
-    sodiumPer100g: row.sodiumPer100g === null ? null : Number(row.sodiumPer100g),
+    sugarPer100g: stringToNumber(row.sugarPer100g),
+    sodiumPer100g: stringToNumber(row.sodiumPer100g),
     novaGroup: row.novaGroup,
   };
 }

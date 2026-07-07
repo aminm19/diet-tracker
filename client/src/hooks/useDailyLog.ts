@@ -13,6 +13,7 @@
 // previous in-flight fetch via `AbortController`.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Food, LogEntry, LogTotals } from "shared";
+import { computeLogTotals } from "shared";
 import { ApiError, getFoodById, getLogs } from "../lib/api";
 
 export interface EnrichedEntry extends LogEntry {
@@ -29,18 +30,6 @@ interface State {
 }
 
 const EMPTY_TOTALS: LogTotals = { calories: 0, protein: 0, carbs: 0, fat: 0 };
-
-function computeTotals(entries: LogEntry[]): LogTotals {
-  return entries.reduce<LogTotals>(
-    (acc, entry) => ({
-      calories: acc.calories + entry.calories,
-      protein: acc.protein + entry.protein,
-      carbs: acc.carbs + entry.carbs,
-      fat: acc.fat + entry.fat,
-    }),
-    { calories: 0, protein: 0, carbs: 0, fat: 0 },
-  );
-}
 
 export function useDailyLog(date: string) {
   const [state, setState] = useState<State>({
@@ -115,7 +104,7 @@ export function useDailyLog(date: string) {
     foodCacheRef.current.set(food.id, food);
     setState((prev) => {
       const entries = [...prev.entries, { ...entry, food }];
-      return { ...prev, entries, totals: computeTotals(entries) };
+      return { ...prev, entries, totals: computeLogTotals(entries) };
     });
   }, []);
 
@@ -124,14 +113,14 @@ export function useDailyLog(date: string) {
       const entries = prev.entries.map((existing) =>
         existing.id === entry.id ? { ...entry, food: existing.food } : existing,
       );
-      return { ...prev, entries, totals: computeTotals(entries) };
+      return { ...prev, entries, totals: computeLogTotals(entries) };
     });
   }, []);
 
   const removeEntryLocally = useCallback((id: number) => {
     setState((prev) => {
       const entries = prev.entries.filter((entry) => entry.id !== id);
-      return { ...prev, entries, totals: computeTotals(entries) };
+      return { ...prev, entries, totals: computeLogTotals(entries) };
     });
   }, []);
 

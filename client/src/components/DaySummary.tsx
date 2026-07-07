@@ -1,12 +1,10 @@
-import type { LogTotals } from "shared";
+import type { Goals, LogTotals } from "shared";
 import { DateNav } from "./DateNav";
 import { MacroProgress } from "./MacroProgress";
 
-// Goals are the same shape as `LogTotals` (calories/protein/carbs/fat) — no
-// goals API exists yet (Unit 6), so the caller passes `null` for now. Once
-// Unit 6 ships, it can pass the real fetched goals here unchanged.
-export type Goals = LogTotals;
-
+// `Goals` (calories/protein/carbs/fat) mirrors the `goals` table — no goals
+// API exists yet (Unit 6), so the caller passes `null` for now. Once Unit 6
+// ships, it can pass the real fetched goals here unchanged.
 interface DaySummaryProps {
   date: string;
   onDateChange: (date: string) => void;

@@ -1,7 +1,8 @@
 import { Plus } from "@phosphor-icons/react";
 import { useState } from "react";
+import type { Goals } from "shared";
 import { AddFoodModal } from "./components/AddFoodModal";
-import { DaySummary, type Goals } from "./components/DaySummary";
+import { DaySummary } from "./components/DaySummary";
 import { EntryList } from "./components/EntryList";
 import { useDailyLog } from "./hooks/useDailyLog";
 import { todayString } from "./lib/date";
