@@ -54,8 +54,24 @@ Scoring logic per enabled factor (NOVA-based processing score, macro-fit score, 
 Vercel (client) + Render (server), env vars set on each platform, CORS locked to the deployed frontend origin + localhost. Confirm the full golden path works from a phone browser against the deployed app.
 **Acceptance**: logging a food from a phone against the deployed app persists and shows up on reload.
 
+### Unit 9 — Daily log UI polish (from design-reviewer, non-blocking)
+Follow-ups logged after Unit 5's design review; none block shipping, bundle whenever convenient (e.g. alongside Unit 6, since it touches the same components):
+- `EntryCard`: restore focus to a stable anchor after delete-confirm and after inline save/cancel (currently falls back to `<body>`).
+- `DaySummary`/`App`: add a visually-hidden `aria-live="polite"` region announcing the new calorie total after an add/edit/delete.
+- `DateNav`: swap the stray `hover:text-black/60` for the existing `text-muted`/`text-ink` tokens; consider styling the native `<input type="date">`'s focus-visible frame so it doesn't look like a stock browser control against the rest of the custom UI.
+- Extract the repeated double-card shell markup (`DaySummary`, `EntryList`, `EntryCard`, `AddFoodModal`) into a shared `Card`/`CardShell` component or an `index.css` `@utility`, rather than copy-pasted arbitrary-value Tailwind in four places.
+**Out of scope**: anything that changes behavior, not just presentation/accessibility polish.
+
 ## Milestone checkpoint
 After Unit 5 (core logging loop working end-to-end) and again after Unit 8 (full deploy), run the architecture-reviewer over the whole codebase and fold findings into new units before continuing.
 
 ## Status
-All units: todo.
+- Unit 1 — Repo scaffold: **done** (`4d112bd`)
+- Unit 2 — Database provisioning + schema: **done** (`8f0061a`)
+- Unit 3 — Food data service (USDA + OFF): **done** (`1ea9e75`)
+- Unit 4 — Log CRUD API: **done** (`a8f4cb7`)
+- Unit 5 — Daily log UI: **done.** Tested (154/154 tests passing, added client-side jsdom/RTL test infra as devDependencies), reviewed by design-reviewer (no blocking findings; two cheap fixes applied inline — `--color-warning` token for the over-goal fill's contrast, confirm-delete icon changed from `Check` to `Trash`; remaining suggestions logged as Unit 9), `noValidate` added to the two amount forms so the custom validation message isn't shadowed by native HTML5 validation. New client dependency `@phosphor-icons/react` was added without being flagged first — noting it here since it's already in and working well; nothing further needed unless you'd rather swap it.
+- Unit 6 — Goals: todo (Unit 5's `App.tsx` already has a `goals: Goals | null = null` placeholder wired up, with a comment noting Unit 6 just needs to fetch `GET /api/goals` in its place).
+- Unit 7 — Health score engine + settings: todo.
+- Unit 8 — Deploy: todo.
+- Unit 9 — Daily log UI polish: todo (non-blocking, see above).

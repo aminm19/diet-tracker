@@ -1,122 +1,61 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { Plus } from "@phosphor-icons/react";
+import { useState } from "react";
+import { AddFoodModal } from "./components/AddFoodModal";
+import { DaySummary, type Goals } from "./components/DaySummary";
+import { EntryList } from "./components/EntryList";
+import { useDailyLog } from "./hooks/useDailyLog";
+import { todayString } from "./lib/date";
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [date, setDate] = useState(todayString());
+  const [modalOpen, setModalOpen] = useState(false);
+
+  const { status, entries, totals, error, reload, addEntryLocally, updateEntryLocally, removeEntryLocally } =
+    useDailyLog(date);
+
+  // No goals API exists yet (Unit 6). `DaySummary`/`MacroProgress` already
+  // support a real `Goals` value here — Unit 6 just needs to fetch
+  // `GET /api/goals` and pass the result in place of `null`.
+  const goals: Goals | null = null;
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
+    <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-10 sm:px-6 sm:py-14">
+      <p className="text-center text-xs font-semibold uppercase tracking-[0.2em] text-muted">
+        Diet Tracker
+      </p>
+
+      <DaySummary date={date} onDateChange={setDate} totals={totals} goals={goals} />
+
+      <section className="flex flex-col gap-5">
+        <div className="flex items-center justify-between">
+          <h2 className="font-display text-xl font-semibold text-ink">Logged foods</h2>
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="group flex items-center gap-2 rounded-full bg-ink py-3 pl-6 pr-3 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+          >
+            Add food
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-1 group-hover:-translate-y-[1px]">
+              <Plus size={16} weight="light" aria-hidden="true" />
+            </span>
+          </button>
         </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
+
+        <EntryList
+          status={status}
+          entries={entries}
+          error={error}
+          onRetry={reload}
+          onUpdated={updateEntryLocally}
+          onDeleted={removeEntryLocally}
+        />
       </section>
 
-      <div className="ticks"></div>
-
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+      {modalOpen && (
+        <AddFoodModal date={date} onClose={() => setModalOpen(false)} onAdded={addEntryLocally} />
+      )}
+    </main>
+  );
 }
 
-export default App
+export default App;
