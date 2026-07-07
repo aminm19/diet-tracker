@@ -32,7 +32,7 @@ const VARIANT_CLASSES: Record<IconButtonVariant, string> = {
     "flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/[0.04] text-ink transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-black/[0.08] active:scale-[0.92] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
   // `App`'s health-score gear button — borderless, muted icon.
   ghost:
-    "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:text-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
+    "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas",
 };
 
 interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {

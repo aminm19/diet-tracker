@@ -34,6 +34,10 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
     initialFocusRef: searchInputRef,
   });
 
+  // Synchronous double-submit guard — see `GoalsModal` for why a ref (rather
+  // than relying on the `submitting` state's disabled button) is needed.
+  const submittingRef = useRef(false);
+
   // Debounced search (~300ms). An empty query is treated as "nothing to
   // search yet" directly from `query` at render time below, rather than
   // stored in state, so this effect only needs to run the actual search.
@@ -73,7 +77,7 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!selectedFood) return;
+    if (!selectedFood || submittingRef.current) return;
 
     const parsedAmount = Number(amount);
     if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
@@ -81,6 +85,7 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -90,6 +95,7 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : "Couldn't log this food. Try again.");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }

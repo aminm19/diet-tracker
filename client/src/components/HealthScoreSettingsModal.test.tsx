@@ -89,6 +89,24 @@ describe("HealthScoreSettingsModal — load + prefill", () => {
   });
 });
 
+describe("HealthScoreSettingsModal — initial-focus timing", () => {
+  it("moves focus to the master toggle button once settings finish loading, not just the Close button at mount", async () => {
+    const d = deferred<HealthScoreSettings>();
+    mockGetSettings.mockReturnValue(d.promise);
+
+    render(<HealthScoreSettingsModal onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    // While still loading, only the Close button is focusable/present.
+    expect(screen.getByLabelText("Loading settings")).toBeInTheDocument();
+
+    d.resolve(existingSettings);
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Turn off health score" })).toHaveFocus(),
+    );
+  });
+});
+
 describe("HealthScoreSettingsModal — master toggle disables factor rows", () => {
   it("visually disables (greys out + disables inputs of) the four factor rows when master is off", async () => {
     const user = userEvent.setup();

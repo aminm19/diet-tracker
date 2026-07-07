@@ -1,4 +1,5 @@
 import { ArrowClockwise, ForkKnife, WarningCircle } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
 import type { LogEntry } from "shared";
 import type { EnrichedEntry } from "../hooks/useDailyLog";
 import { EntryCard } from "./EntryCard";
@@ -12,6 +13,10 @@ interface EntryListProps {
   onRetry: () => void;
   onUpdated: (entry: LogEntry) => void;
   onDeleted: (id: number) => void;
+  // Called once a delete leaves the list empty, so the parent can move focus
+  // to a stable page-level anchor (e.g. the "Add food" button) instead of
+  // leaving it nowhere once the last row unmounts.
+  onEmptyAfterDelete?: () => void;
 }
 
 function EntrySkeletonRow({ index }: { index: number }) {
@@ -34,7 +39,68 @@ function EntrySkeletonRow({ index }: { index: number }) {
   );
 }
 
-export function EntryList({ status, entries, error, onRetry, onUpdated, onDeleted }: EntryListProps) {
+export function EntryList({
+  status,
+  entries,
+  error,
+  onRetry,
+  onUpdated,
+  onDeleted,
+  onEmptyAfterDelete,
+}: EntryListProps) {
+  // Edit-button DOM nodes for every currently-rendered row, keyed by entry
+  // id — populated by each `EntryCard` via `registerEditButton`. Used to
+  // restore focus to a sibling row after a delete removes the row that had
+  // it (see `handleDeleted` below).
+  const editButtonsRef = useRef(new Map<number, HTMLButtonElement>());
+  // Entry id (or "empty") to focus once `entries` reflects a just-completed
+  // delete — set synchronously in `handleDeleted` (using the pre-removal
+  // `entries`/index), then applied in the effect below once the parent's
+  // state update has actually removed the entry and re-rendered.
+  const [pendingFocusTarget, setPendingFocusTarget] = useState<number | "empty" | null>(null);
+
+  function registerEditButton(id: number, el: HTMLButtonElement | null) {
+    if (el) editButtonsRef.current.set(id, el);
+    else editButtonsRef.current.delete(id);
+  }
+
+  function handleDeleted(id: number) {
+    const index = entries.findIndex((entry) => entry.id === id);
+    let target: number | "empty" | null = null;
+    if (index !== -1) {
+      if (entries.length === 1) {
+        target = "empty";
+      } else if (index + 1 < entries.length) {
+        target = entries[index + 1]!.id;
+      } else {
+        target = entries[index - 1]!.id;
+      }
+    }
+    setPendingFocusTarget(target);
+    onDeleted(id);
+  }
+
+  useEffect(() => {
+    if (pendingFocusTarget === null) return;
+    // Deferred via `requestAnimationFrame` (mirrors `useModal`'s initial-focus
+    // effect and `EntryCard`'s mount animation) so the focus move happens
+    // after this render has committed, once `entries` already reflects the
+    // completed delete.
+    const frame = requestAnimationFrame(() => {
+      if (pendingFocusTarget === "empty") {
+        onEmptyAfterDelete?.();
+      } else {
+        editButtonsRef.current.get(pendingFocusTarget)?.focus();
+      }
+      setPendingFocusTarget(null);
+    });
+    return () => cancelAnimationFrame(frame);
+    // Only re-run when `entries` actually changes (i.e. once the delete has
+    // been applied and the DOM reflects it) — `pendingFocusTarget` itself is
+    // read directly from the latest render's closure, not listed as a dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entries]);
+
   if (status === "loading") {
     return (
       <div className="flex flex-col gap-3" aria-busy="true" aria-label="Loading entries">
@@ -81,7 +147,14 @@ export function EntryList({ status, entries, error, onRetry, onUpdated, onDelete
   return (
     <div className="flex flex-col gap-3">
       {entries.map((entry, index) => (
-        <EntryCard key={entry.id} entry={entry} index={index} onUpdated={onUpdated} onDeleted={onDeleted} />
+        <EntryCard
+          key={entry.id}
+          entry={entry}
+          index={index}
+          onUpdated={onUpdated}
+          onDeleted={handleDeleted}
+          registerEditButton={(el) => registerEditButton(entry.id, el)}
+        />
       ))}
     </div>
   );

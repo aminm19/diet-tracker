@@ -51,4 +51,18 @@ describe("DateNav", () => {
     fireEvent.change(screen.getByLabelText("Jump to a specific date"), { target: { value: "" } });
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it("uses the app's text-ink token (not an ad-hoc black opacity) for the jump-to-date hover state", () => {
+    render(<DateNav date="2026-07-06" onChange={vi.fn()} />);
+    const label = screen.getByText("Jump to date").closest("label")!;
+    expect(label.className).toContain("hover:text-ink");
+    expect(label.className).not.toContain("hover:text-black/60");
+  });
+
+  it("gives the native date input an intentional focus-visible frame (ring + accent-color)", () => {
+    render(<DateNav date="2026-07-06" onChange={vi.fn()} />);
+    const input = screen.getByLabelText("Jump to a specific date");
+    expect(input.className).toContain("focus-visible:ring-2");
+    expect(input.className).toContain("accent-[var(--color-ink)]");
+  });
 });

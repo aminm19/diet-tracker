@@ -46,6 +46,13 @@ interface State {
 export function HealthScoreBadge({ date, refreshKey }: HealthScoreBadgeProps) {
   const [state, setState] = useState<State>({ status: "loading", result: null, error: null });
   const requestIdRef = useRef(0);
+  // Tracks whether the previously-resolved fetch showed a visible badge, so
+  // a transition to `status: "hidden"` (e.g. right after the user turns off
+  // the master toggle and saves) can be explicitly announced — otherwise the
+  // badge just silently disappears with no confirmation for screen-reader
+  // users.
+  const previousVisibleRef = useRef(false);
+  const [hiddenAnnouncement, setHiddenAnnouncement] = useState<string | null>(null);
 
   useEffect(() => {
     const requestId = ++requestIdRef.current;
@@ -68,6 +75,30 @@ export function HealthScoreBadge({ date, refreshKey }: HealthScoreBadgeProps) {
     })();
   }, [date, refreshKey]);
 
+  // Announce the hidden -> visible -> hidden transition. Skipped while a
+  // fetch is in flight or errored (`state.status !== "success"`) so an
+  // in-progress reload never clobbers a just-set announcement before its
+  // result is known.
+  useEffect(() => {
+    if (state.status !== "success") return;
+    const isVisible = !!state.result && state.result.status !== "hidden";
+    // The ref bookkeeping stays synchronous (unlike the `setHiddenAnnouncement`
+    // call below) so a second transition arriving within the same animation
+    // frame as the first is still tracked correctly — deferring this too
+    // would let a same-frame cleanup cancel the first transition's bookkeeping
+    // before it ever ran.
+    const wasVisible = previousVisibleRef.current;
+    previousVisibleRef.current = isVisible;
+    if (isVisible === wasVisible) return; // no transition — nothing to announce
+
+    // Deferred via `requestAnimationFrame` rather than a synchronous setState
+    // call in the effect body (mirrors `useModal`'s post-mount effects).
+    const frame = requestAnimationFrame(() => {
+      setHiddenAnnouncement(isVisible ? null : "Health score hidden");
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [state]);
+
   if (state.status === "loading") {
     return (
       <div
@@ -89,7 +120,14 @@ export function HealthScoreBadge({ date, refreshKey }: HealthScoreBadgeProps) {
 
   const result = state.result;
   if (!result || result.status === "hidden") {
-    return null;
+    // Usually renders nothing, same as before — except right after a
+    // previously-visible badge just became hidden, when a brief sr-only
+    // announcement confirms the disappearance for screen-reader users.
+    return hiddenAnnouncement ? (
+      <span aria-live="polite" className="sr-only">
+        {hiddenAnnouncement}
+      </span>
+    ) : null;
   }
 
   if (result.status === "insufficient_data") {

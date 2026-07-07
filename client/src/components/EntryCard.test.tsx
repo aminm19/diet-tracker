@@ -274,6 +274,30 @@ describe("EntryCard — delete flow", () => {
     expect(onDeleted).toHaveBeenCalledWith(42);
   });
 
+  it("moves focus to the Edit button after a successful save", async () => {
+    const user = userEvent.setup();
+    mockUpdateLog.mockResolvedValue({ ...makeEntry(), amount: 200, calories: 330 });
+
+    render(<EntryCard entry={makeEntry()} index={0} onUpdated={vi.fn()} onDeleted={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Chicken breast" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Edit Chicken breast" })).toHaveFocus(),
+    );
+  });
+
+  it("moves focus to the Edit button after cancelling an edit", async () => {
+    const user = userEvent.setup();
+    render(<EntryCard entry={makeEntry()} index={0} onUpdated={vi.fn()} onDeleted={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Edit Chicken breast" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByRole("button", { name: "Edit Chicken breast" })).toHaveFocus();
+  });
+
   it("shows an error and reverts to view mode if delete fails", async () => {
     const user = userEvent.setup();
     mockDeleteLog.mockRejectedValue(new ApiError("Cannot delete", 500));

@@ -1,5 +1,5 @@
 import { CaretDown, PencilSimple, Trash, X } from "@phosphor-icons/react";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import type { LogEntry, LogUnit } from "shared";
 import { ApiError, deleteLog, updateLog } from "../lib/api";
 import type { EnrichedEntry } from "../hooks/useDailyLog";
@@ -12,11 +12,17 @@ interface EntryCardProps {
   index: number;
   onUpdated: (entry: LogEntry) => void;
   onDeleted: (id: number) => void;
+  // Reports the view-mode "Edit" button's DOM node up to `EntryList` (called
+  // with `null` on unmount) so it can restore focus to a sibling row's Edit
+  // button after this row is removed by a delete — this component only
+  // manages its own post-save/cancel focus internally (see the `mode` effect
+  // below).
+  registerEditButton?: (el: HTMLButtonElement | null) => void;
 }
 
 type Mode = "view" | "edit" | "confirm-delete";
 
-export function EntryCard({ entry, index, onUpdated, onDeleted }: EntryCardProps) {
+export function EntryCard({ entry, index, onUpdated, onDeleted, registerEditButton }: EntryCardProps) {
   const [mounted, setMounted] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [mode, setMode] = useState<Mode>("view");
@@ -26,10 +32,27 @@ export function EntryCard({ entry, index, onUpdated, onDeleted }: EntryCardProps
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const editButtonRef = useRef<HTMLButtonElement | null>(null);
+  const prevModeRef = useRef<Mode>(mode);
+
   useEffect(() => {
     const frame = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(frame);
   }, []);
+
+  // After a successful save or a cancel (edit -> view), move focus to this
+  // row's own "Edit" button rather than leaving it wherever it happened to
+  // fall (effectively `<body>`, since the edit form that held focus just
+  // unmounted). Scoped to exactly the edit -> view transition so it doesn't
+  // fight with the confirm-delete flow, where the clicked button already
+  // naturally retains focus.
+  useEffect(() => {
+    const prevMode = prevModeRef.current;
+    prevModeRef.current = mode;
+    if (prevMode === "edit" && mode === "view") {
+      editButtonRef.current?.focus();
+    }
+  }, [mode]);
 
   const canUseServing = entry.food?.servingSize != null;
 
@@ -205,7 +228,15 @@ export function EntryCard({ entry, index, onUpdated, onDeleted }: EntryCardProps
                 </>
               ) : (
                 <>
-                  <IconButton variant="entryNeutral" onClick={startEdit} aria-label={`Edit ${foodName}`}>
+                  <IconButton
+                    ref={(el) => {
+                      editButtonRef.current = el;
+                      registerEditButton?.(el);
+                    }}
+                    variant="entryNeutral"
+                    onClick={startEdit}
+                    aria-label={`Edit ${foodName}`}
+                  >
                     <PencilSimple size={18} weight="light" aria-hidden="true" />
                   </IconButton>
                   <IconButton

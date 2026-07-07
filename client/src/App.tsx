@@ -1,5 +1,5 @@
 import { Gear, PencilSimple, Plus } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Goals } from "shared";
 import { AddFoodModal } from "./components/AddFoodModal";
 import { DaySummary } from "./components/DaySummary";
@@ -26,6 +26,10 @@ function App() {
     useDailyLog(date);
 
   const [goals, setGoals] = useState<Goals | null>(null);
+
+  // Focus anchor for `EntryList`'s post-delete focus restoration: when a
+  // delete empties the log, focus lands here rather than nowhere.
+  const addFoodButtonRef = useRef<HTMLButtonElement>(null);
 
   // Fetched once on mount — goals aren't scoped to `date`, unlike the daily
   // log. Saving in `GoalsModal` updates this locally (no refetch needed),
@@ -66,7 +70,7 @@ function App() {
           <button
             type="button"
             onClick={() => setGoalsModalOpen(true)}
-            className="flex items-center gap-1.5 rounded-full px-1 text-xs font-medium text-muted transition-colors hover:text-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+            className="flex items-center gap-1.5 rounded-full px-1 text-xs font-medium text-muted transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
           >
             <PencilSimple size={13} weight="light" aria-hidden="true" />
             {goals ? "Edit goals" : "Set goals"}
@@ -77,7 +81,7 @@ function App() {
       <section className="flex flex-col gap-5">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-xl font-semibold text-ink">Logged foods</h2>
-          <Button variant="primaryLarge" onClick={() => setModalOpen(true)}>
+          <Button ref={addFoodButtonRef} variant="primaryLarge" onClick={() => setModalOpen(true)}>
             Add food
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-1 group-hover:-translate-y-[1px]">
               <Plus size={16} weight="light" aria-hidden="true" />
@@ -92,6 +96,7 @@ function App() {
           onRetry={reload}
           onUpdated={updateEntryLocally}
           onDeleted={removeEntryLocally}
+          onEmptyAfterDelete={() => addFoodButtonRef.current?.focus()}
         />
       </section>
 

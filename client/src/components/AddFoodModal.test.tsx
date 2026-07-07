@@ -249,6 +249,39 @@ describe("AddFoodModal — select & submit flow", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
+  it("ignores a second submit fired while the first is still in flight (double-submit guard)", async () => {
+    mockSearchFoods.mockResolvedValue([makeFood({ servingSize: null })]);
+    let resolveCreate!: (entry: Awaited<ReturnType<typeof createLog>>) => void;
+    mockCreateLog.mockReturnValue(new Promise((resolve) => (resolveCreate = resolve)));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    render(<AddFoodModal date="2026-07-06" onClose={vi.fn()} onAdded={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText("Search for a food…"), { target: { value: "ban" } });
+    await act(300);
+    await waitFor(() => expect(screen.getByText("Banana")).toBeInTheDocument());
+    await user.click(screen.getByText("Banana"));
+
+    const form = screen.getByDisplayValue("100").closest("form")!;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+
+    expect(mockCreateLog).toHaveBeenCalledTimes(1);
+
+    resolveCreate({
+      id: 1,
+      loggedDate: "2026-07-06",
+      foodId: 1,
+      amount: 100,
+      unit: "g",
+      calories: 89,
+      protein: 1.1,
+      carbs: 23,
+      fat: 0.3,
+      sugar: 12,
+      sodium: 1,
+    });
+  });
+
   it("Back returns to search results without submitting", async () => {
     mockSearchFoods.mockResolvedValue([makeFood({ servingSize: null })]);
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });

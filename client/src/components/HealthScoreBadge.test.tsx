@@ -148,6 +148,85 @@ describe("HealthScoreBadge — score bands", () => {
   });
 });
 
+describe("HealthScoreBadge — hidden-transition announcement", () => {
+  it("does not announce anything the first time the badge resolves to hidden", async () => {
+    mockGetHealthScore.mockResolvedValue({ status: "hidden" });
+    const { container } = render(<HealthScoreBadge date="2026-07-06" />);
+
+    await waitFor(() => expect(container.querySelector('[aria-busy="true"]')).not.toBeInTheDocument());
+    expect(container.querySelector('[aria-live="polite"]')).not.toBeInTheDocument();
+  });
+
+  it("announces 'Health score hidden' when a previously-visible badge becomes hidden", async () => {
+    mockGetHealthScore.mockResolvedValueOnce(okResult(80));
+    const { rerender } = render(<HealthScoreBadge date="2026-07-06" refreshKey={0} />);
+    await screen.findByRole("status");
+
+    mockGetHealthScore.mockResolvedValueOnce({ status: "hidden" });
+    rerender(<HealthScoreBadge date="2026-07-06" refreshKey={1} />);
+
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("Health score hidden")).toBeInTheDocument(),
+    );
+    const liveRegion = screen.getByText("Health score hidden");
+    expect(liveRegion).toHaveAttribute("aria-live", "polite");
+    expect(liveRegion).toHaveClass("sr-only");
+  });
+
+  // Exercises the specific timing bug the builder says it previously hit:
+  // a hidden -> visible -> hidden double-transition landing before either
+  // rAF-deferred announcement frame has actually fired. The first
+  // transition's frame must be canceled (by the effect's own cleanup, since
+  // `state` changed again before it ran) so only the second, correct,
+  // final announcement ever applies.
+  it("still ends up announcing correctly after a hidden -> visible -> hidden sequence where both transitions land before any deferred frame fires", () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let nextId = 0;
+    const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      nextId += 1;
+      frames.set(nextId, cb);
+      return nextId;
+    });
+    const cancelSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((handle) => {
+      frames.delete(handle);
+    });
+
+    mockGetHealthScore.mockResolvedValueOnce({ status: "hidden" });
+    const { rerender } = render(<HealthScoreBadge date="2026-07-06" refreshKey={0} />);
+
+    // Baseline hidden on first-ever resolve: no transition, no frame scheduled.
+    return (async () => {
+      await flushAll();
+      expect(frames.size).toBe(0);
+
+      // hidden -> visible: schedules a frame (clears any hidden announcement).
+      mockGetHealthScore.mockResolvedValueOnce(okResult(80));
+      rerender(<HealthScoreBadge date="2026-07-06" refreshKey={1} />);
+      await flushAll();
+      expect(frames.size).toBe(1);
+
+      // visible -> hidden, before the first frame above ever fired: the
+      // effect's cleanup must cancel that stale frame and schedule a new one.
+      mockGetHealthScore.mockResolvedValueOnce({ status: "hidden" });
+      rerender(<HealthScoreBadge date="2026-07-06" refreshKey={2} />);
+      await flushAll();
+      expect(frames.size).toBe(1); // stale frame canceled, exactly one live frame remains
+
+      // Now let whatever frame(s) actually remain fire, in schedule order.
+      act(() => {
+        for (const cb of frames.values()) cb(0);
+      });
+
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+      expect(screen.getByText("Health score hidden")).toBeInTheDocument();
+
+      rafSpy.mockRestore();
+      cancelSpy.mockRestore();
+    })();
+  });
+});
+
 describe("HealthScoreBadge — stale-response guard", () => {
   it("does not let a slow response for an old date overwrite the badge after the date has changed", async () => {
     const dA = deferred<HealthScoreResult>();

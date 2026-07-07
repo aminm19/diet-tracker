@@ -1,5 +1,5 @@
 import { Target, WarningCircle, X } from "@phosphor-icons/react";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import type { Goals } from "shared";
 import { ApiError, updateGoals } from "../lib/api";
 import { useModal } from "../hooks/useModal";
@@ -36,8 +36,21 @@ export function GoalsModal({ goals, onClose, onSaved }: GoalsModalProps) {
     carbs: goals ? String(goals.carbs) : "",
     fat: goals ? String(goals.fat) : "",
   });
+  // Tracks whether the user has changed any field since mount — guards the
+  // re-seed effect below so an in-flight `goals` fetch resolving late never
+  // clobbers something the user already typed. A ref (not state) because the
+  // re-seed is deferred a frame (see below) and must re-check the *latest*
+  // touched status at that point, not the status when the frame was
+  // scheduled.
+  const touchedRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Synchronous double-submit guard: `submitting` state only takes effect
+  // once React flushes the re-render, so a second submit fired in the same
+  // tick (double-click, Enter+click) could still slip through before the
+  // Save button's `disabled` attribute updates. This ref is set immediately.
+  const submittingRef = useRef(false);
 
   const firstInputRef = useRef<HTMLInputElement>(null);
   const { visible, panelRef, handleClose, handleBackdropMouseDown } = useModal({
@@ -45,12 +58,37 @@ export function GoalsModal({ goals, onClose, onSaved }: GoalsModalProps) {
     initialFocusRef: firstInputRef,
   });
 
+  // `goals` is fetched once by `App` on mount and may still be in flight
+  // (null) when this modal is opened. If it resolves to a real value while
+  // the modal is still open, re-seed the fields from it — but only if the
+  // user hasn't started editing yet, so an in-progress edit is never
+  // silently overwritten.
+  useEffect(() => {
+    if (!goals || touchedRef.current) return;
+    // Deferred via `requestAnimationFrame` (mirrors `useModal`'s own
+    // post-mount effects) rather than calling `setValues` synchronously here.
+    // Re-checks `touchedRef` at execution time, not just when scheduled — the
+    // user could start editing during the deferred frame.
+    const frame = requestAnimationFrame(() => {
+      if (touchedRef.current) return;
+      setValues({
+        calories: String(goals.calories),
+        protein: String(goals.protein),
+        carbs: String(goals.carbs),
+        fat: String(goals.fat),
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [goals]);
+
   function setField(key: keyof Goals, value: string) {
+    touchedRef.current = true;
     setValues((prev) => ({ ...prev, [key]: value }));
   }
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (submittingRef.current) return;
 
     const parsed: Partial<Record<keyof Goals, number>> = {};
     for (const field of FIELDS) {
@@ -63,6 +101,7 @@ export function GoalsModal({ goals, onClose, onSaved }: GoalsModalProps) {
       parsed[field.key] = num;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -72,6 +111,7 @@ export function GoalsModal({ goals, onClose, onSaved }: GoalsModalProps) {
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : "Couldn't save goals. Try again.");
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
@@ -104,7 +144,7 @@ export function GoalsModal({ goals, onClose, onSaved }: GoalsModalProps) {
         </div>
 
         <form onSubmit={handleSubmit} noValidate className="mt-5 flex min-h-0 flex-1 flex-col gap-5">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             {FIELDS.map((field, index) => (
               <label key={field.key} className="flex flex-col gap-1.5">
                 <span className="text-xs font-semibold uppercase tracking-wider text-muted">

@@ -61,6 +61,16 @@ beforeEach(() => {
   mockUpdateHealthScoreSettings.mockReset();
 });
 
+describe("App — design tokens", () => {
+  it("uses the text-ink token (not an ad-hoc black opacity) for the goals button's hover state", async () => {
+    render(<App />);
+    await waitFor(() => expect(mockGetGoals).toHaveBeenCalledTimes(1));
+    const goalsButton = screen.getByRole("button", { name: /Set goals/ });
+    expect(goalsButton.className).toContain("hover:text-ink");
+    expect(goalsButton.className).not.toContain("hover:text-black/60");
+  });
+});
+
 describe("App — goals wiring on mount", () => {
   it("calls getGoals on mount and uses the result to set goals (goals already set)", async () => {
     mockGetGoals.mockResolvedValue(existingGoals);

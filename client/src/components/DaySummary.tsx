@@ -15,6 +15,13 @@ interface DaySummaryProps {
 export function DaySummary({ date, onDateChange, totals, goals }: DaySummaryProps) {
   return (
     <Card as="section" aria-label="Daily summary" innerClassName="p-6 sm:p-8">
+      {/* Announces the running calorie total to screen readers whenever it
+          changes (add/edit/delete) — visually hidden since the number is
+          already shown via `MacroProgress` below. */}
+      <span aria-live="polite" className="sr-only">
+        {Math.round(totals.calories).toLocaleString()} calories logged
+      </span>
+
       <DateNav date={date} onChange={onDateChange} />
 
       <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-[1.2fr_1fr] md:gap-8">

@@ -18,15 +18,15 @@ export function DateNav({ date, onChange }: DateNavProps) {
         <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
           {formatDateLabel(date)}
         </h1>
-        <label className="group relative cursor-pointer text-xs font-medium text-muted transition-colors hover:text-black/60">
-          <span>Jump to date</span>
+        <label className="group relative flex min-w-[9.5rem] cursor-pointer justify-center text-xs font-medium text-muted transition-colors hover:text-ink">
+          <span className="pointer-events-none group-focus-within:opacity-0">Jump to date</span>
           <input
             type="date"
             value={date}
             onChange={(event) => {
               if (event.target.value) onChange(event.target.value);
             }}
-            className="absolute inset-0 h-full w-full cursor-pointer opacity-0 focus-visible:opacity-100"
+            className="absolute inset-0 h-full w-full cursor-pointer rounded-md opacity-0 accent-[var(--color-ink)] focus-visible:bg-white focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
             aria-label="Jump to a specific date"
           />
         </label>

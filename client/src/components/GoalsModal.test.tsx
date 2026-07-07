@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Goals } from "shared";
@@ -40,6 +40,97 @@ describe("GoalsModal — prefill", () => {
     for (const input of inputs) {
       expect(input.value).toBe("");
     }
+  });
+});
+
+describe("GoalsModal — responsive layout", () => {
+  it("stacks fields in a single column below sm, two columns at sm and up", () => {
+    const { container } = render(<GoalsModal goals={existingGoals} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const grid = container.querySelector(".grid")!;
+    expect(grid.className).toContain("grid-cols-1");
+    expect(grid.className).toContain("sm:grid-cols-2");
+  });
+});
+
+describe("GoalsModal — re-seeding from a late-arriving `goals` prop", () => {
+  it("re-seeds empty fields once `goals` resolves from null to a real value while still open", async () => {
+    const { rerender } = render(<GoalsModal goals={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect((screen.getAllByRole("spinbutton")[0] as HTMLInputElement).value).toBe("");
+
+    rerender(<GoalsModal goals={existingGoals} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByDisplayValue("2000")).toBeInTheDocument());
+    expect(screen.getByDisplayValue("150")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("200")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("70")).toBeInTheDocument();
+  });
+
+  it("does not clobber a field the user already edited when `goals` resolves late", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<GoalsModal goals={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    const caloriesInput = screen.getAllByRole("spinbutton")[0]!;
+    await user.type(caloriesInput, "1234");
+    expect((caloriesInput as HTMLInputElement).value).toBe("1234");
+
+    rerender(<GoalsModal goals={existingGoals} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    // Give the (guarded) re-seed effect a chance to run if it were going to.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    expect((caloriesInput as HTMLInputElement).value).toBe("1234");
+  });
+
+  // Exercises the *specific* race the builder says an earlier version got
+  // wrong: the re-seed effect's `requestAnimationFrame` callback is already
+  // scheduled (because `goals` just resolved from null and the user hadn't
+  // typed anything yet) when the user starts typing DURING that pending
+  // frame — i.e. after the frame is scheduled but before it fires. The
+  // deferred callback must re-check `touchedRef` at execution time and back
+  // off, not just at the moment the effect first ran.
+  it("does not clobber typing that happens during the deferred re-seed frame's pending window", async () => {
+    const user = userEvent.setup();
+    // Fully replaces `requestAnimationFrame` (rather than just spying on the
+    // real one) so the captured callback only ever runs when *we* invoke it
+    // below — otherwise the real browser-timing rAF could fire on its own
+    // during `user.type`'s per-keystroke delays, seeding the field for real
+    // before typing starts and making this test timing-dependent/flaky.
+    let seedFrameCallback: FrameRequestCallback | undefined;
+    const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      seedFrameCallback = cb;
+      return 1;
+    });
+
+    const { rerender } = render(<GoalsModal goals={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    // `goals` resolves to a real value; the user hasn't touched anything yet,
+    // so the re-seed effect schedules its frame (captured, not yet run).
+    rerender(<GoalsModal goals={existingGoals} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(seedFrameCallback).toBeDefined();
+
+    // User starts typing DURING the pending frame's window, before it fires.
+    const caloriesInput = screen.getAllByRole("spinbutton")[0]!;
+    await user.type(caloriesInput, "999");
+    expect((caloriesInput as HTMLInputElement).value).toBe("999");
+
+    // Now let the deferred re-seed frame actually run (it must re-check
+    // `touchedRef` here, not rely on a stale check from when it was scheduled).
+    act(() => {
+      seedFrameCallback!(0);
+    });
+
+    // The user's in-progress typing must survive, not be silently overwritten.
+    expect((caloriesInput as HTMLInputElement).value).toBe("999");
+
+    rafSpy.mockRestore();
+  });
+
+  it("does re-seed when `goals` resolves late and the user has not typed anything", async () => {
+    const { rerender } = render(<GoalsModal goals={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect((screen.getAllByRole("spinbutton")[0] as HTMLInputElement).value).toBe("");
+
+    rerender(<GoalsModal goals={existingGoals} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+    await waitFor(() => expect((screen.getAllByRole("spinbutton")[0] as HTMLInputElement).value).toBe("2000"));
   });
 });
 
@@ -168,6 +259,25 @@ describe("GoalsModal — submit flow", () => {
     await user.click(screen.getByRole("button", { name: "Save goals" }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Couldn't save goals. Try again."));
+  });
+
+  it("ignores a second submit fired while the first is still in flight (double-submit guard)", async () => {
+    let resolveSave!: (goals: Goals) => void;
+    mockUpdateGoals.mockReturnValue(new Promise((resolve) => (resolveSave = resolve)));
+
+    render(<GoalsModal goals={existingGoals} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const form = screen.getByDisplayValue("2000").closest("form")!;
+
+    // Two submits fired back-to-back, before React flushes the `submitting`
+    // state update that disables the button — the synchronous ref guard
+    // should still only let the first one through.
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+
+    expect(mockUpdateGoals).toHaveBeenCalledTimes(1);
+
+    resolveSave({ calories: 2000, protein: 150, carbs: 200, fat: 70 });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save goals" })).toBeInTheDocument());
   });
 });
 

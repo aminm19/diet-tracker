@@ -111,6 +111,19 @@ export function HealthScoreSettingsModal({ onClose, onSaved }: HealthScoreSettin
     loadSettings();
   }, []);
 
+  // `useModal`'s initial-focus effect fires once, on mount, via
+  // `requestAnimationFrame` — at that point `loadStatus` is still "loading"
+  // (the fetch above hasn't resolved yet), so it focuses whatever's
+  // focusable then (the Close button, shown during loading) rather than the
+  // master toggle this modal actually wants focused once settings are ready.
+  // Re-focus once loading transitions to success, when `firstFocusableRef`
+  // has been reassigned to the toggle button by the JSX below.
+  useEffect(() => {
+    if (loadStatus === "success") {
+      firstFocusableRef.current?.focus();
+    }
+  }, [loadStatus]);
+
   function setMasterEnabled(value: boolean) {
     setForm((prev) => (prev ? { ...prev, masterEnabled: value } : prev));
   }

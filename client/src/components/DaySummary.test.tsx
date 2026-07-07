@@ -3,6 +3,10 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { DaySummary } from "./DaySummary";
 
+function getLiveRegion(container: HTMLElement) {
+  return container.querySelector('[aria-live="polite"]')!;
+}
+
 const totals = { calories: 500, protein: 20, carbs: 40, fat: 10 };
 
 describe("DaySummary", () => {
@@ -30,5 +34,34 @@ describe("DaySummary", () => {
     expect(screen.getByText("Protein")).toBeInTheDocument();
     expect(screen.getByText("Carbs")).toBeInTheDocument();
     expect(screen.getByText("Fat")).toBeInTheDocument();
+  });
+});
+
+describe("DaySummary — calorie total announcement", () => {
+  it("renders a visually-hidden aria-live region announcing the calorie total", () => {
+    const { container } = render(
+      <DaySummary date="2026-07-06" onDateChange={vi.fn()} totals={totals} goals={null} />,
+    );
+    const liveRegion = getLiveRegion(container);
+    expect(liveRegion).toBeInTheDocument();
+    expect(liveRegion).toHaveClass("sr-only");
+    expect(liveRegion).toHaveTextContent("500 calories logged");
+  });
+
+  it("updates the announcement text when the calorie total changes", () => {
+    const { container, rerender } = render(
+      <DaySummary date="2026-07-06" onDateChange={vi.fn()} totals={totals} goals={null} />,
+    );
+    expect(getLiveRegion(container)).toHaveTextContent("500 calories logged");
+
+    rerender(
+      <DaySummary
+        date="2026-07-06"
+        onDateChange={vi.fn()}
+        totals={{ calories: 1450, protein: 80, carbs: 120, fat: 40 }}
+        goals={null}
+      />,
+    );
+    expect(getLiveRegion(container)).toHaveTextContent("1,450 calories logged");
   });
 });
