@@ -3,6 +3,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { SHARED_SCAFFOLD_MARKER } from "shared";
+import { onError } from "./errorHandler.js";
 import { foodsRoute } from "./routes/foods.js";
 import { goalsRoute } from "./routes/goals.js";
 import { healthScoreRoute } from "./routes/healthScore.js";
@@ -25,6 +26,8 @@ app.route("/api/foods", foodsRoute);
 app.route("/api/goals", goalsRoute);
 app.route("/api/health-score", healthScoreRoute);
 app.route("/api/logs", logsRoute);
+
+app.onError(onError);
 
 const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
 

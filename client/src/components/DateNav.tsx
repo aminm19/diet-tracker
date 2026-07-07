@@ -1,25 +1,18 @@
 import { CaretLeft, CaretRight } from "@phosphor-icons/react";
 import { addDays, formatDateLabel } from "../lib/date";
+import { IconButton } from "./ui/IconButton";
 
 interface DateNavProps {
   date: string;
   onChange: (date: string) => void;
 }
 
-const NAV_BUTTON_CLASSES =
-  "flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-black/[0.04] text-ink transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-black/[0.08] active:scale-[0.92] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas";
-
 export function DateNav({ date, onChange }: DateNavProps) {
   return (
     <nav className="flex items-center justify-between gap-3" aria-label="Day navigation">
-      <button
-        type="button"
-        onClick={() => onChange(addDays(date, -1))}
-        aria-label="Previous day"
-        className={NAV_BUTTON_CLASSES}
-      >
+      <IconButton variant="nav" onClick={() => onChange(addDays(date, -1))} aria-label="Previous day">
         <CaretLeft size={20} weight="light" aria-hidden="true" />
-      </button>
+      </IconButton>
 
       <div className="flex flex-col items-center gap-1.5">
         <h1 className="font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
@@ -39,14 +32,9 @@ export function DateNav({ date, onChange }: DateNavProps) {
         </label>
       </div>
 
-      <button
-        type="button"
-        onClick={() => onChange(addDays(date, 1))}
-        aria-label="Next day"
-        className={NAV_BUTTON_CLASSES}
-      >
+      <IconButton variant="nav" onClick={() => onChange(addDays(date, 1))} aria-label="Next day">
         <CaretRight size={20} weight="light" aria-hidden="true" />
-      </button>
+      </IconButton>
     </nav>
   );
 }

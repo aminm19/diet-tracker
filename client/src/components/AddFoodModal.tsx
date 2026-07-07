@@ -2,15 +2,16 @@ import { MagnifyingGlass, Plus, WarningCircle, X } from "@phosphor-icons/react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import type { Food, LogEntry, LogUnit } from "shared";
 import { ApiError, createLog, searchFoods } from "../lib/api";
+import { useModal } from "../hooks/useModal";
+import { Button } from "./ui/Button";
+import { Card } from "./ui/Card";
+import { IconButton } from "./ui/IconButton";
 
 interface AddFoodModalProps {
   date: string;
   onClose: () => void;
   onAdded: (entry: LogEntry, food: Food) => void;
 }
-
-const FOCUSABLE_SELECTOR =
-  'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 // Mounted by the parent only while open (`{modalOpen && <AddFoodModal ... />}`)
 // so every open is a fresh mount — state starts at its initial values with
@@ -27,33 +28,11 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const [visible, setVisible] = useState(false);
-
-  const panelRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const triggerRef = useRef<Element | null>(null);
-
-  // Enter animation + initial focus, run once on mount.
-  useEffect(() => {
-    triggerRef.current = document.activeElement;
-    const frame = requestAnimationFrame(() => setVisible(true));
-    const focusFrame = requestAnimationFrame(() => searchInputRef.current?.focus());
-    return () => {
-      cancelAnimationFrame(frame);
-      cancelAnimationFrame(focusFrame);
-    };
-  }, []);
-
-  // Lock body scroll while the modal is open, restoring whatever value was
-  // there before (this component only ever mounts while open, so this runs
-  // exactly once per open/close cycle).
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, []);
+  const { visible, panelRef, handleClose, handleBackdropMouseDown } = useModal({
+    onClose,
+    initialFocusRef: searchInputRef,
+  });
 
   // Debounced search (~300ms). An empty query is treated as "nothing to
   // search yet" directly from `query` at render time below, rather than
@@ -84,42 +63,6 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
       controller.abort();
     };
   }, [query, selectedFood]);
-
-  // Escape closes; Tab is trapped within the panel.
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab" || !panelRef.current) return;
-
-      const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-        (el) => !el.hasAttribute("disabled"),
-      );
-      if (focusable.length === 0) return;
-
-      const first = focusable[0]!;
-      const last = focusable[focusable.length - 1]!;
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  function handleClose() {
-    (triggerRef.current as HTMLElement | null)?.focus?.();
-    onClose();
-  }
 
   function selectFood(food: Food) {
     setSelectedFood(food);
@@ -156,32 +99,26 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
       className={`fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xl transition-opacity duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
         visible ? "opacity-100" : "opacity-0"
       }`}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) handleClose();
-      }}
+      onMouseDown={handleBackdropMouseDown}
     >
-      <div
+      <Card
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="add-food-modal-title"
-        className={`flex max-h-[85vh] w-full max-w-lg flex-col rounded-[2rem] bg-black/[0.03] p-2 ring-1 ring-black/5 shadow-[0_8px_40px_-12px_rgba(0,0,0,0.25)] transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+        shadow="modal"
+        className={`flex max-h-[85vh] w-full max-w-lg flex-col transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
           visible ? "scale-100 opacity-100" : "scale-95 opacity-0"
         }`}
+        innerClassName="flex min-h-0 flex-1 flex-col p-5 sm:p-6"
       >
-        <div className="flex min-h-0 flex-1 flex-col rounded-[calc(2rem-0.375rem)] bg-white p-5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.6)] sm:p-6">
           <div className="flex items-center justify-between gap-4">
             <h2 id="add-food-modal-title" className="font-display text-xl font-semibold text-ink">
               {selectedFood ? "Log this food" : "Add food"}
             </h2>
-            <button
-              type="button"
-              onClick={handleClose}
-              aria-label="Close"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-black/[0.05] text-ink transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-black/[0.1] active:scale-[0.92] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-            >
+            <IconButton variant="close" onClick={handleClose} aria-label="Close">
               <X size={18} weight="light" aria-hidden="true" />
-            </button>
+            </IconButton>
           </div>
 
           {selectedFood ? (
@@ -245,23 +182,15 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
               )}
 
               <div className="mt-auto flex items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedFood(null)}
-                  className="rounded-full bg-black/[0.05] px-5 py-2.5 text-sm font-semibold text-ink transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-black/[0.08] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-                >
+                <Button variant="secondary" onClick={() => setSelectedFood(null)}>
                   Back
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="group flex items-center gap-2 rounded-full bg-ink py-2.5 pl-5 pr-2.5 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-                >
+                </Button>
+                <Button type="submit" variant="primary" disabled={submitting}>
                   {submitting ? "Logging…" : "Log it"}
                   <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-1 group-hover:-translate-y-[1px]">
                     <Plus size={14} weight="light" aria-hidden="true" />
                   </span>
-                </button>
+                </Button>
               </div>
             </form>
           ) : (
@@ -325,8 +254,7 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
               </div>
             </div>
           )}
-        </div>
-      </div>
+      </Card>
     </div>
   );
 }

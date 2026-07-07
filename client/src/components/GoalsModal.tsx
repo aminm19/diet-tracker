@@ -1,16 +1,17 @@
 import { Target, WarningCircle, X } from "@phosphor-icons/react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 import type { Goals } from "shared";
 import { ApiError, updateGoals } from "../lib/api";
+import { useModal } from "../hooks/useModal";
+import { Button } from "./ui/Button";
+import { Card } from "./ui/Card";
+import { IconButton } from "./ui/IconButton";
 
 interface GoalsModalProps {
   goals: Goals | null;
   onClose: () => void;
   onSaved: (goals: Goals) => void;
 }
-
-const FOCUSABLE_SELECTOR =
-  'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 interface FieldConfig {
   key: keyof Goals;
@@ -37,69 +38,12 @@ export function GoalsModal({ goals, onClose, onSaved }: GoalsModalProps) {
   });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [visible, setVisible] = useState(false);
 
-  const panelRef = useRef<HTMLDivElement>(null);
   const firstInputRef = useRef<HTMLInputElement>(null);
-  const triggerRef = useRef<Element | null>(null);
-
-  // Enter animation + initial focus, run once on mount.
-  useEffect(() => {
-    triggerRef.current = document.activeElement;
-    const frame = requestAnimationFrame(() => setVisible(true));
-    const focusFrame = requestAnimationFrame(() => firstInputRef.current?.focus());
-    return () => {
-      cancelAnimationFrame(frame);
-      cancelAnimationFrame(focusFrame);
-    };
-  }, []);
-
-  // Lock body scroll while the modal is open, restoring whatever value was
-  // there before (this component only ever mounts while open, so this runs
-  // exactly once per open/close cycle).
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, []);
-
-  // Escape closes; Tab is trapped within the panel.
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab" || !panelRef.current) return;
-
-      const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-        (el) => !el.hasAttribute("disabled"),
-      );
-      if (focusable.length === 0) return;
-
-      const first = focusable[0]!;
-      const last = focusable[focusable.length - 1]!;
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  function handleClose() {
-    (triggerRef.current as HTMLElement | null)?.focus?.();
-    onClose();
-  }
+  const { visible, panelRef, handleClose, handleBackdropMouseDown } = useModal({
+    onClose,
+    initialFocusRef: firstInputRef,
+  });
 
   function setField(key: keyof Goals, value: string) {
     setValues((prev) => ({ ...prev, [key]: value }));
@@ -137,82 +81,67 @@ export function GoalsModal({ goals, onClose, onSaved }: GoalsModalProps) {
       className={`fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xl transition-opacity duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
         visible ? "opacity-100" : "opacity-0"
       }`}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) handleClose();
-      }}
+      onMouseDown={handleBackdropMouseDown}
     >
-      <div
+      <Card
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="goals-modal-title"
-        className={`flex max-h-[85vh] w-full max-w-lg flex-col rounded-[2rem] bg-black/[0.03] p-2 ring-1 ring-black/5 shadow-[0_8px_40px_-12px_rgba(0,0,0,0.25)] transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+        shadow="modal"
+        className={`flex max-h-[85vh] w-full max-w-lg flex-col transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
           visible ? "scale-100 opacity-100" : "scale-95 opacity-0"
         }`}
+        innerClassName="flex min-h-0 flex-1 flex-col p-5 sm:p-6"
       >
-        <div className="flex min-h-0 flex-1 flex-col rounded-[calc(2rem-0.375rem)] bg-white p-5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.6)] sm:p-6">
-          <div className="flex items-center justify-between gap-4">
-            <h2 id="goals-modal-title" className="font-display text-xl font-semibold text-ink">
-              {goals ? "Edit goals" : "Set goals"}
-            </h2>
-            <button
-              type="button"
-              onClick={handleClose}
-              aria-label="Close"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-black/[0.05] text-ink transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-black/[0.1] active:scale-[0.92] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-            >
-              <X size={18} weight="light" aria-hidden="true" />
-            </button>
+        <div className="flex items-center justify-between gap-4">
+          <h2 id="goals-modal-title" className="font-display text-xl font-semibold text-ink">
+            {goals ? "Edit goals" : "Set goals"}
+          </h2>
+          <IconButton variant="close" onClick={handleClose} aria-label="Close">
+            <X size={18} weight="light" aria-hidden="true" />
+          </IconButton>
+        </div>
+
+        <form onSubmit={handleSubmit} noValidate className="mt-5 flex min-h-0 flex-1 flex-col gap-5">
+          <div className="grid grid-cols-2 gap-4">
+            {FIELDS.map((field, index) => (
+              <label key={field.key} className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+                  {field.label} ({field.unit})
+                </span>
+                <input
+                  ref={index === 0 ? firstInputRef : undefined}
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={values[field.key]}
+                  onChange={(event) => setField(field.key, event.target.value)}
+                  className="rounded-xl bg-black/[0.04] px-3 py-2 text-sm font-medium text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
+                />
+              </label>
+            ))}
           </div>
 
-          <form onSubmit={handleSubmit} noValidate className="mt-5 flex min-h-0 flex-1 flex-col gap-5">
-            <div className="grid grid-cols-2 gap-4">
-              {FIELDS.map((field, index) => (
-                <label key={field.key} className="flex flex-col gap-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-                    {field.label} ({field.unit})
-                  </span>
-                  <input
-                    ref={index === 0 ? firstInputRef : undefined}
-                    type="number"
-                    min="0"
-                    step="any"
-                    value={values[field.key]}
-                    onChange={(event) => setField(field.key, event.target.value)}
-                    className="rounded-xl bg-black/[0.04] px-3 py-2 text-sm font-medium text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-                  />
-                </label>
-              ))}
-            </div>
+          {submitError && (
+            <p role="alert" className="flex items-center gap-1.5 text-sm font-medium text-red-600">
+              <WarningCircle size={16} weight="light" aria-hidden="true" /> {submitError}
+            </p>
+          )}
 
-            {submitError && (
-              <p role="alert" className="flex items-center gap-1.5 text-sm font-medium text-red-600">
-                <WarningCircle size={16} weight="light" aria-hidden="true" /> {submitError}
-              </p>
-            )}
-
-            <div className="mt-auto flex items-center gap-3 pt-2">
-              <button
-                type="button"
-                onClick={handleClose}
-                className="rounded-full bg-black/[0.05] px-5 py-2.5 text-sm font-semibold text-ink transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-black/[0.08] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={submitting}
-                className="group flex items-center gap-2 rounded-full bg-ink py-2.5 pl-5 pr-2.5 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-              >
-                {submitting ? "Saving…" : "Save goals"}
-                <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-1 group-hover:-translate-y-[1px]">
-                  <Target size={14} weight="light" aria-hidden="true" />
-                </span>
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
+          <div className="mt-auto flex items-center gap-3 pt-2">
+            <Button variant="secondary" onClick={handleClose}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={submitting}>
+              {submitting ? "Saving…" : "Save goals"}
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-1 group-hover:-translate-y-[1px]">
+                <Target size={14} weight="light" aria-hidden="true" />
+              </span>
+            </Button>
+          </div>
+        </form>
+      </Card>
     </div>
   );
 }

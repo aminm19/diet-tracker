@@ -28,9 +28,13 @@ vi.mock("../services/logs.js", () => ({
 }));
 
 const { logsRoute } = await import("./logs.js");
+const { onError } = await import("../errorHandler.js");
 
 const app = new Hono();
 app.route("/api/logs", logsRoute);
+// index.ts registers this same handler on the real app; wire it up here too
+// since these tests mount logsRoute on a standalone Hono instance.
+app.onError(onError);
 
 const sampleEntry: LogEntry = {
   id: 1,

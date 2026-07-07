@@ -3,6 +3,9 @@ import { type FormEvent, useEffect, useState } from "react";
 import type { LogEntry, LogUnit } from "shared";
 import { ApiError, deleteLog, updateLog } from "../lib/api";
 import type { EnrichedEntry } from "../hooks/useDailyLog";
+import { Button } from "./ui/Button";
+import { Card } from "./ui/Card";
+import { IconButton } from "./ui/IconButton";
 
 interface EntryCardProps {
   entry: EnrichedEntry;
@@ -12,12 +15,6 @@ interface EntryCardProps {
 }
 
 type Mode = "view" | "edit" | "confirm-delete";
-
-const ICON_BUTTON_CLASSES =
-  "flex h-9 w-9 items-center justify-center rounded-full transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.92] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-white";
-
-const PILL_BUTTON_CLASSES =
-  "rounded-full px-5 py-2 text-sm font-semibold transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:opacity-50";
 
 export function EntryCard({ entry, index, onUpdated, onDeleted }: EntryCardProps) {
   const [mounted, setMounted] = useState(false);
@@ -95,150 +92,135 @@ export function EntryCard({ entry, index, onUpdated, onDeleted }: EntryCardProps
         if (removing && event.propertyName === "opacity") onDeleted(entry.id);
       }}
     >
-      <div className="rounded-2xl bg-black/[0.03] p-1.5 ring-1 ring-black/5 shadow-[0_8px_40px_-12px_rgba(0,0,0,0.12)]">
-        <div className="rounded-[calc(1rem-0.25rem)] bg-white p-4 shadow-[inset_0_1px_1px_rgba(255,255,255,0.6)] sm:p-5">
-          {mode === "edit" ? (
-            <form onSubmit={handleSave} noValidate className="flex flex-col gap-4">
-              <div className="flex items-baseline justify-between gap-2">
-                <p className="font-display text-lg font-semibold text-ink">{foodName}</p>
-                {brand && <p className="text-sm text-muted">{brand}</p>}
-              </div>
+      <Card radius="sm" innerClassName="p-4 sm:p-5">
+        {mode === "edit" ? (
+          <form onSubmit={handleSave} noValidate className="flex flex-col gap-4">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="font-display text-lg font-semibold text-ink">{foodName}</p>
+              {brand && <p className="text-sm text-muted">{brand}</p>}
+            </div>
 
-              <div className="flex flex-wrap items-end gap-3">
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-                    Amount
-                  </span>
-                  <input
-                    type="number"
-                    min="0.1"
-                    step="any"
-                    value={amount}
-                    onChange={(event) => setAmount(event.target.value)}
-                    className="w-28 rounded-xl bg-black/[0.04] px-3 py-2 text-sm font-medium text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-                    autoFocus
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+                  Amount
+                </span>
+                <input
+                  type="number"
+                  min="0.1"
+                  step="any"
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  className="w-28 rounded-xl bg-black/[0.04] px-3 py-2 text-sm font-medium text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
+                  autoFocus
+                />
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted">
+                  Unit
+                </span>
+                <div className="relative">
+                  <select
+                    value={unit}
+                    onChange={(event) => setUnit(event.target.value as LogUnit)}
+                    className="appearance-none rounded-xl bg-black/[0.04] py-2 pl-3 pr-8 text-sm font-medium text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
+                  >
+                    <option value="g">g</option>
+                    <option value="oz">oz</option>
+                    <option value="serving" disabled={!canUseServing}>
+                      serving
+                    </option>
+                  </select>
+                  <CaretDown
+                    size={12}
+                    weight="light"
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted"
                   />
-                </label>
+                </div>
+              </label>
 
-                <label className="flex flex-col gap-1.5">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-muted">
-                    Unit
-                  </span>
-                  <div className="relative">
-                    <select
-                      value={unit}
-                      onChange={(event) => setUnit(event.target.value as LogUnit)}
-                      className="appearance-none rounded-xl bg-black/[0.04] py-2 pl-3 pr-8 text-sm font-medium text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-                    >
-                      <option value="g">g</option>
-                      <option value="oz">oz</option>
-                      <option value="serving" disabled={!canUseServing}>
-                        serving
-                      </option>
-                    </select>
-                    <CaretDown
-                      size={12}
-                      weight="light"
-                      aria-hidden="true"
-                      className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted"
-                    />
-                  </div>
-                </label>
+              <Button type="submit" variant="entryPrimary" disabled={saving}>
+                {saving ? "Saving…" : "Save"}
+              </Button>
+              <Button type="button" variant="entrySecondary" onClick={cancelEdit} disabled={saving}>
+                Cancel
+              </Button>
+            </div>
 
-                <button type="submit" disabled={saving} className={`${PILL_BUTTON_CLASSES} bg-ink text-white`}>
-                  {saving ? "Saving…" : "Save"}
-                </button>
-                <button
-                  type="button"
-                  onClick={cancelEdit}
-                  disabled={saving}
-                  className={`${PILL_BUTTON_CLASSES} bg-black/[0.05] text-ink hover:bg-black/[0.08]`}
-                >
-                  Cancel
-                </button>
+            {!canUseServing && (
+              <p className="text-xs text-muted">This food has no serving size on record.</p>
+            )}
+            {error && (
+              <p role="alert" className="text-sm font-medium text-red-600">
+                {error}
+              </p>
+            )}
+          </form>
+        ) : (
+          <div className="flex items-center justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <p className="truncate font-display text-lg font-semibold text-ink">{foodName}</p>
+                {brand && <p className="truncate text-sm text-muted">{brand}</p>}
               </div>
-
-              {!canUseServing && (
-                <p className="text-xs text-muted">This food has no serving size on record.</p>
-              )}
+              <p className="mt-0.5 text-sm text-muted">
+                {entry.amount} {entry.unit}
+                {entry.unit === "serving" ? (entry.amount === 1 ? "" : "s") : ""}
+              </p>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-medium text-muted">
+                <span>{Math.round(entry.calories)} kcal</span>
+                <span>{Math.round(entry.protein)}g protein</span>
+                <span>{Math.round(entry.carbs)}g carbs</span>
+                <span>{Math.round(entry.fat)}g fat</span>
+              </div>
               {error && (
-                <p role="alert" className="text-sm font-medium text-red-600">
+                <p role="alert" className="mt-2 text-sm font-medium text-red-600">
                   {error}
                 </p>
               )}
-            </form>
-          ) : (
-            <div className="flex items-center justify-between gap-4">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-baseline gap-x-2">
-                  <p className="truncate font-display text-lg font-semibold text-ink">{foodName}</p>
-                  {brand && <p className="truncate text-sm text-muted">{brand}</p>}
-                </div>
-                <p className="mt-0.5 text-sm text-muted">
-                  {entry.amount} {entry.unit}
-                  {entry.unit === "serving" ? (entry.amount === 1 ? "" : "s") : ""}
-                </p>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-medium text-muted">
-                  <span>{Math.round(entry.calories)} kcal</span>
-                  <span>{Math.round(entry.protein)}g protein</span>
-                  <span>{Math.round(entry.carbs)}g carbs</span>
-                  <span>{Math.round(entry.fat)}g fat</span>
-                </div>
-                {error && (
-                  <p role="alert" className="mt-2 text-sm font-medium text-red-600">
-                    {error}
-                  </p>
-                )}
-              </div>
-
-              <div className="flex shrink-0 items-center gap-2">
-                {mode === "confirm-delete" ? (
-                  <>
-                    <span className="mr-1 text-xs font-medium text-muted">Delete?</span>
-                    <button
-                      type="button"
-                      onClick={handleConfirmDelete}
-                      disabled={deleting}
-                      aria-label="Confirm delete"
-                      className={`${ICON_BUTTON_CLASSES} bg-red-600/10 text-red-600 hover:bg-red-600/15`}
-                    >
-                      <Trash size={18} weight="fill" aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMode("view")}
-                      disabled={deleting}
-                      aria-label="Cancel delete"
-                      className={`${ICON_BUTTON_CLASSES} bg-black/[0.05] text-ink hover:bg-black/[0.08]`}
-                    >
-                      <X size={18} weight="light" aria-hidden="true" />
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      onClick={startEdit}
-                      aria-label={`Edit ${foodName}`}
-                      className={`${ICON_BUTTON_CLASSES} bg-black/[0.05] text-ink hover:bg-black/[0.08]`}
-                    >
-                      <PencilSimple size={18} weight="light" aria-hidden="true" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMode("confirm-delete")}
-                      aria-label={`Delete ${foodName}`}
-                      className={`${ICON_BUTTON_CLASSES} bg-black/[0.05] text-ink hover:bg-red-600/10 hover:text-red-600`}
-                    >
-                      <Trash size={18} weight="light" aria-hidden="true" />
-                    </button>
-                  </>
-                )}
-              </div>
             </div>
-          )}
-        </div>
-      </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              {mode === "confirm-delete" ? (
+                <>
+                  <span className="mr-1 text-xs font-medium text-muted">Delete?</span>
+                  <IconButton
+                    variant="entryDangerSolid"
+                    onClick={handleConfirmDelete}
+                    disabled={deleting}
+                    aria-label="Confirm delete"
+                  >
+                    <Trash size={18} weight="fill" aria-hidden="true" />
+                  </IconButton>
+                  <IconButton
+                    variant="entryNeutral"
+                    onClick={() => setMode("view")}
+                    disabled={deleting}
+                    aria-label="Cancel delete"
+                  >
+                    <X size={18} weight="light" aria-hidden="true" />
+                  </IconButton>
+                </>
+              ) : (
+                <>
+                  <IconButton variant="entryNeutral" onClick={startEdit} aria-label={`Edit ${foodName}`}>
+                    <PencilSimple size={18} weight="light" aria-hidden="true" />
+                  </IconButton>
+                  <IconButton
+                    variant="entryDangerGhost"
+                    onClick={() => setMode("confirm-delete")}
+                    aria-label={`Delete ${foodName}`}
+                  >
+                    <Trash size={18} weight="light" aria-hidden="true" />
+                  </IconButton>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }

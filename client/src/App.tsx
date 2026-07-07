@@ -7,6 +7,8 @@ import { EntryList } from "./components/EntryList";
 import { GoalsModal } from "./components/GoalsModal";
 import { HealthScoreBadge } from "./components/HealthScoreBadge";
 import { HealthScoreSettingsModal } from "./components/HealthScoreSettingsModal";
+import { Button } from "./components/ui/Button";
+import { IconButton } from "./components/ui/IconButton";
 import { useDailyLog } from "./hooks/useDailyLog";
 import { getGoals } from "./lib/api";
 import { todayString } from "./lib/date";
@@ -52,14 +54,13 @@ function App() {
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div className="flex items-center gap-1.5">
             <HealthScoreBadge date={date} refreshKey={healthScoreRefreshKey} />
-            <button
-              type="button"
+            <IconButton
+              variant="ghost"
               onClick={() => setHealthScoreSettingsOpen(true)}
               aria-label="Health score settings"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:text-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
             >
               <Gear size={14} weight="light" aria-hidden="true" />
-            </button>
+            </IconButton>
           </div>
 
           <button
@@ -76,16 +77,12 @@ function App() {
       <section className="flex flex-col gap-5">
         <div className="flex items-center justify-between">
           <h2 className="font-display text-xl font-semibold text-ink">Logged foods</h2>
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="group flex items-center gap-2 rounded-full bg-ink py-3 pl-6 pr-3 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
-          >
+          <Button variant="primaryLarge" onClick={() => setModalOpen(true)}>
             Add food
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-1 group-hover:-translate-y-[1px]">
               <Plus size={16} weight="light" aria-hidden="true" />
             </span>
-          </button>
+          </Button>
         </div>
 
         <EntryList

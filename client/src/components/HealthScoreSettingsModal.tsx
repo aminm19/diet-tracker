@@ -2,14 +2,15 @@ import { ArrowClockwise, Gauge, ToggleLeft, ToggleRight, WarningCircle, X } from
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import type { HealthScoreFactorKey, HealthScoreSettings } from "shared";
 import { ApiError, getHealthScoreSettings, updateHealthScoreSettings } from "../lib/api";
+import { useModal } from "../hooks/useModal";
+import { Button } from "./ui/Button";
+import { Card } from "./ui/Card";
+import { IconButton } from "./ui/IconButton";
 
 interface HealthScoreSettingsModalProps {
   onClose: () => void;
   onSaved: (settings: HealthScoreSettings) => void;
 }
-
-const FOCUSABLE_SELECTOR =
-  'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 interface FactorConfig {
   key: HealthScoreFactorKey;
@@ -81,11 +82,12 @@ export function HealthScoreSettingsModal({ onClose, onSaved }: HealthScoreSettin
 
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [visible, setVisible] = useState(false);
 
-  const panelRef = useRef<HTMLDivElement>(null);
   const firstFocusableRef = useRef<HTMLButtonElement>(null);
-  const triggerRef = useRef<Element | null>(null);
+  const { visible, panelRef, handleClose, handleBackdropMouseDown } = useModal({
+    onClose,
+    initialFocusRef: firstFocusableRef,
+  });
 
   function loadSettings() {
     // Wrapped in a nested async IIFE (mirrors `useDailyLog`/`HealthScoreBadge`)
@@ -108,64 +110,6 @@ export function HealthScoreSettingsModal({ onClose, onSaved }: HealthScoreSettin
   useEffect(() => {
     loadSettings();
   }, []);
-
-  // Enter animation + initial focus, run once on mount.
-  useEffect(() => {
-    triggerRef.current = document.activeElement;
-    const frame = requestAnimationFrame(() => setVisible(true));
-    const focusFrame = requestAnimationFrame(() => firstFocusableRef.current?.focus());
-    return () => {
-      cancelAnimationFrame(frame);
-      cancelAnimationFrame(focusFrame);
-    };
-  }, []);
-
-  // Lock body scroll while the modal is open, restoring whatever value was
-  // there before (this component only ever mounts while open, so this runs
-  // exactly once per open/close cycle).
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, []);
-
-  // Escape closes; Tab is trapped within the panel.
-  useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab" || !panelRef.current) return;
-
-      const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
-        (el) => !el.hasAttribute("disabled"),
-      );
-      if (focusable.length === 0) return;
-
-      const first = focusable[0]!;
-      const last = focusable[focusable.length - 1]!;
-
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
-
-  function handleClose() {
-    (triggerRef.current as HTMLElement | null)?.focus?.();
-    onClose();
-  }
 
   function setMasterEnabled(value: boolean) {
     setForm((prev) => (prev ? { ...prev, masterEnabled: value } : prev));
@@ -224,69 +168,63 @@ export function HealthScoreSettingsModal({ onClose, onSaved }: HealthScoreSettin
       className={`fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xl transition-opacity duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
         visible ? "opacity-100" : "opacity-0"
       }`}
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) handleClose();
-      }}
+      onMouseDown={handleBackdropMouseDown}
     >
-      <div
+      <Card
         ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="health-score-settings-title"
-        className={`flex max-h-[85vh] w-full max-w-lg flex-col rounded-[2rem] bg-black/[0.03] p-2 ring-1 ring-black/5 shadow-[0_8px_40px_-12px_rgba(0,0,0,0.25)] transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+        shadow="modal"
+        className={`flex max-h-[85vh] w-full max-w-lg flex-col transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
           visible ? "scale-100 opacity-100" : "scale-95 opacity-0"
         }`}
+        innerClassName="flex min-h-0 flex-1 flex-col p-5 sm:p-6"
       >
-        <div className="flex min-h-0 flex-1 flex-col rounded-[calc(2rem-0.375rem)] bg-white p-5 shadow-[inset_0_1px_1px_rgba(255,255,255,0.6)] sm:p-6">
-          <div className="flex items-center justify-between gap-4">
-            <h2
-              id="health-score-settings-title"
-              className="font-display text-xl font-semibold text-ink"
-            >
-              Health score settings
-            </h2>
-            <button
-              ref={loadStatus !== "success" ? firstFocusableRef : undefined}
-              type="button"
-              onClick={handleClose}
-              aria-label="Close"
-              className="flex h-9 w-9 items-center justify-center rounded-full bg-black/[0.05] text-ink transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-black/[0.1] active:scale-[0.92] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-            >
-              <X size={18} weight="light" aria-hidden="true" />
-            </button>
+        <div className="flex items-center justify-between gap-4">
+          <h2
+            id="health-score-settings-title"
+            className="font-display text-xl font-semibold text-ink"
+          >
+            Health score settings
+          </h2>
+          <IconButton
+            ref={loadStatus !== "success" ? firstFocusableRef : undefined}
+            variant="close"
+            onClick={handleClose}
+            aria-label="Close"
+          >
+            <X size={18} weight="light" aria-hidden="true" />
+          </IconButton>
+        </div>
+
+        {loadStatus === "loading" && (
+          <div className="mt-5 flex flex-col gap-3" aria-busy="true" aria-label="Loading settings">
+            {[0, 1, 2].map((i) => (
+              <div
+                key={i}
+                className="h-14 animate-pulse rounded-2xl bg-black/[0.04]"
+                style={{ animationDelay: `${i * 100}ms` }}
+              />
+            ))}
           </div>
+        )}
 
-          {loadStatus === "loading" && (
-            <div className="mt-5 flex flex-col gap-3" aria-busy="true" aria-label="Loading settings">
-              {[0, 1, 2].map((i) => (
-                <div
-                  key={i}
-                  className="h-14 animate-pulse rounded-2xl bg-black/[0.04]"
-                  style={{ animationDelay: `${i * 100}ms` }}
-                />
-              ))}
-            </div>
-          )}
-
-          {loadStatus === "error" && (
-            <div className="mt-5 flex flex-col items-center gap-4 rounded-2xl bg-black/[0.03] p-8 text-center ring-1 ring-black/5">
-              <WarningCircle size={28} weight="light" className="text-muted" aria-hidden="true" />
-              <p className="text-sm text-muted">{loadError ?? "Something went wrong."}</p>
-              <button
-                type="button"
-                onClick={loadSettings}
-                className="group flex items-center gap-2 rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-              >
-                <ArrowClockwise
-                  size={16}
-                  weight="light"
-                  aria-hidden="true"
-                  className="transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:-rotate-45"
-                />
-                Retry
-              </button>
-            </div>
-          )}
+        {loadStatus === "error" && (
+          <div className="mt-5 flex flex-col items-center gap-4 rounded-2xl bg-black/[0.03] p-8 text-center ring-1 ring-black/5">
+            <WarningCircle size={28} weight="light" className="text-muted" aria-hidden="true" />
+            <p className="text-sm text-muted">{loadError ?? "Something went wrong."}</p>
+            <Button variant="retryModal" onClick={loadSettings}>
+              <ArrowClockwise
+                size={16}
+                weight="light"
+                aria-hidden="true"
+                className="transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:-rotate-45"
+              />
+              Retry
+            </Button>
+          </div>
+        )}
 
           {loadStatus === "success" && form && (
             <form onSubmit={handleSubmit} noValidate className="mt-5 flex min-h-0 flex-1 flex-col gap-5">
@@ -385,28 +323,19 @@ export function HealthScoreSettingsModal({ onClose, onSaved }: HealthScoreSettin
               )}
 
               <div className="mt-auto flex items-center gap-3 pt-2">
-                <button
-                  type="button"
-                  onClick={handleClose}
-                  className="rounded-full bg-black/[0.05] px-5 py-2.5 text-sm font-semibold text-ink transition-all duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-black/[0.08] active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-                >
+                <Button variant="secondary" onClick={handleClose}>
                   Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submitting}
-                  className="group flex items-center gap-2 rounded-full bg-ink py-2.5 pl-5 pr-2.5 text-sm font-semibold text-white transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
-                >
+                </Button>
+                <Button type="submit" variant="primary" disabled={submitting}>
                   {submitting ? "Saving…" : "Save settings"}
                   <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/15 transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:translate-x-1 group-hover:-translate-y-[1px]">
                     <Gauge size={14} weight="light" aria-hidden="true" />
                   </span>
-                </button>
+                </Button>
               </div>
             </form>
           )}
-        </div>
-      </div>
+      </Card>
     </div>
   );
 }
