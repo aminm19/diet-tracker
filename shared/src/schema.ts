@@ -32,6 +32,10 @@ export const foods = pgTable(
     sugarPer100g: numeric("sugar_per_100g"),
     sodiumPer100g: numeric("sodium_per_100g"),
     novaGroup: integer("nova_group"), // 1-4 processing classification
+    // Coarse food-group bucket for the health score's variety factor —
+    // 'protein'|'vegetable'|'fruit'|'grain'|'dairy'|'fat'|'other', assigned by
+    // a keyword classifier at cache-write time (see `foodGroupSchema`).
+    foodGroup: text("food_group"),
     rawData: jsonb("raw_data"), // cached original API response
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

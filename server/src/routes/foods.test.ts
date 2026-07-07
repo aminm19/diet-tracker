@@ -39,6 +39,7 @@ const sampleFood: Food = {
   sugarPer100g: null,
   sodiumPer100g: 660,
   novaGroup: null,
+  foodGroup: null,
 };
 
 beforeEach(() => {

@@ -6,3 +6,4 @@ export * from "./schema.js";
 export * from "./food.js";
 export * from "./log.js";
 export * from "./goals.js";
+export * from "./healthScore.js";

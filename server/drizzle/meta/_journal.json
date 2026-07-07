@@ -8,6 +8,13 @@
       "when": 1783314944081,
       "tag": "0000_previous_sir_ram",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783395281222,
+      "tag": "0001_striped_hawkeye",
+      "breakpoints": true
     }
   ]
 }

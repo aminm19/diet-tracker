@@ -6,6 +6,8 @@ import type {
   Food,
   GetLogsResponse,
   Goals,
+  HealthScoreResult,
+  HealthScoreSettings,
   LogEntry,
   UpdateLogRequest,
 } from "shared";
@@ -90,4 +92,19 @@ export function updateGoals(goals: Goals): Promise<Goals> {
     method: "PUT",
     body: JSON.stringify(goals),
   });
+}
+
+export function getHealthScoreSettings(): Promise<HealthScoreSettings> {
+  return request<HealthScoreSettings>("/api/health-score/settings");
+}
+
+export function updateHealthScoreSettings(settings: HealthScoreSettings): Promise<HealthScoreSettings> {
+  return request<HealthScoreSettings>("/api/health-score/settings", {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
+}
+
+export function getHealthScore(date: string): Promise<HealthScoreResult> {
+  return request<HealthScoreResult>(`/api/health-score?date=${date}`);
 }

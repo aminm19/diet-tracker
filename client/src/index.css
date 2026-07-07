@@ -15,6 +15,14 @@
      and its own light track — clears the 3:1 WCAG 1.4.11 minimum for
      non-text UI components; amber-600 sits under that at ~2.9:1. */
   --color-warning: #b45309;
+  /* HealthScoreBadge's red-green score mapping, "needs work"/"good" ends.
+     Both are used as filled badge backgrounds behind white numeral text, so
+     the ratio that matters is white-on-fill, not fill-on-white:
+     #b91c1c (red-700) carries white text at ~6.5:1, #15803d (green-700) at
+     ~5:1 — both comfortably clear the 4.5:1 AA minimum for text. The middle
+     "fair" band reuses --color-warning above (~5:1 white-on-fill too). */
+  --color-danger: #b91c1c;
+  --color-good: #15803d;
 }
 
 :root {

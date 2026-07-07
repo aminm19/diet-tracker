@@ -2,10 +2,11 @@
 // the shared `Food` shape, and caches results into the `foods` table
 // (deduped by `source` + `external_id`).
 import { eq } from "drizzle-orm";
-import type { Food, FoodSource, NormalizedFoodInput } from "shared";
+import type { Food, FoodGroup, FoodSource, NormalizedFoodInput } from "shared";
 import { foods } from "shared";
 import { db } from "../db/client.js";
 import { numericToString, stringToNumber } from "../db/numeric.js";
+import { classifyFoodGroup } from "./foodGroup.js";
 
 const USDA_SEARCH_URL = "https://api.nal.usda.gov/fdc/v1/foods/search";
 const OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl";
@@ -13,8 +14,10 @@ const OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl";
 const OFF_USER_AGENT = "DietTrackerV1/1.0";
 
 // A normalized result plus the raw upstream record, prior to being upserted
-// (and thus not yet assigned an internal DB id).
-type FoodUpsertInput = NormalizedFoodInput & { rawData: unknown };
+// (and thus not yet assigned an internal DB id). `foodGroup` is omitted here
+// — it isn't sourced from USDA/OFF, it's classified from `name` at upsert
+// time (see `upsertFood`).
+type FoodUpsertInput = Omit<NormalizedFoodInput, "foodGroup"> & { rawData: unknown };
 
 // --- USDA FDC ---
 // Confirmed against a live call to the search endpoint (not the detail
@@ -224,6 +227,7 @@ function rowToFood(row: typeof foods.$inferSelect): Food {
     sugarPer100g: stringToNumber(row.sugarPer100g),
     sodiumPer100g: stringToNumber(row.sodiumPer100g),
     novaGroup: row.novaGroup,
+    foodGroup: row.foodGroup as FoodGroup | null,
   };
 }
 
@@ -242,6 +246,8 @@ async function upsertFood(item: FoodUpsertInput): Promise<Food> {
     sugarPer100g: numericToString(item.sugarPer100g),
     sodiumPer100g: numericToString(item.sodiumPer100g),
     novaGroup: item.novaGroup,
+    // Classified from `name` at write time — not sourced from USDA/OFF.
+    foodGroup: classifyFoodGroup(item.name),
     rawData: item.rawData,
   };
 

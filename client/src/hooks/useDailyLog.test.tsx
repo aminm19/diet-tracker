@@ -37,6 +37,7 @@ function makeFood(id: number, overrides: Partial<Food> = {}): Food {
     sugarPer100g: null,
     sodiumPer100g: null,
     novaGroup: null,
+    foodGroup: null,
     ...overrides,
   };
 }

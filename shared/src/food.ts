@@ -7,6 +7,21 @@ import { z } from "zod";
 export const foodSourceSchema = z.enum(["usda", "off"]);
 export type FoodSource = z.infer<typeof foodSourceSchema>;
 
+// Coarse food-group bucket used by the health score's variety factor.
+// Assigned by a keyword classifier (see `server/src/services/foodGroup.ts`)
+// at cache-write time — not sourced from USDA/OFF directly. `"other"` is the
+// fallback when nothing matches.
+export const foodGroupSchema = z.enum([
+  "protein",
+  "vegetable",
+  "fruit",
+  "grain",
+  "dairy",
+  "fat",
+  "other",
+]);
+export type FoodGroup = z.infer<typeof foodGroupSchema>;
+
 // A cached, normalized food record — mirrors the `foods` table (minus
 // internal-only bookkeeping columns like `raw_data`/timestamps). All
 // nutrient fields are per 100g of the food so any logged amount can be
@@ -31,6 +46,7 @@ export const foodSchema = z.object({
   sugarPer100g: z.number().nullable(),
   sodiumPer100g: z.number().nullable(),
   novaGroup: z.number().int().min(1).max(4).nullable(),
+  foodGroup: foodGroupSchema.nullable(),
 });
 export type Food = z.infer<typeof foodSchema>;
 

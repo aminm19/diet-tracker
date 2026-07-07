@@ -1,0 +1,1 @@
+ALTER TABLE "foods" ADD COLUMN "food_group" text;

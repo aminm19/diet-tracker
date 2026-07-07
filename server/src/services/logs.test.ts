@@ -158,6 +158,7 @@ const usdaChicken: Food = {
   sugarPer100g: null,
   sodiumPer100g: 660,
   novaGroup: null,
+  foodGroup: "protein",
 };
 
 const offPizza: Food = {
@@ -175,6 +176,7 @@ const offPizza: Food = {
   sugarPer100g: 3.5,
   sodiumPer100g: 600,
   novaGroup: 4,
+  foodGroup: "other",
 };
 
 beforeEach(() => {

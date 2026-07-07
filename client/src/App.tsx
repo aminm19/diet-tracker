@@ -1,10 +1,12 @@
-import { PencilSimple, Plus } from "@phosphor-icons/react";
+import { Gear, PencilSimple, Plus } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import type { Goals } from "shared";
 import { AddFoodModal } from "./components/AddFoodModal";
 import { DaySummary } from "./components/DaySummary";
 import { EntryList } from "./components/EntryList";
 import { GoalsModal } from "./components/GoalsModal";
+import { HealthScoreBadge } from "./components/HealthScoreBadge";
+import { HealthScoreSettingsModal } from "./components/HealthScoreSettingsModal";
 import { useDailyLog } from "./hooks/useDailyLog";
 import { getGoals } from "./lib/api";
 import { todayString } from "./lib/date";
@@ -13,6 +15,10 @@ function App() {
   const [date, setDate] = useState(todayString());
   const [modalOpen, setModalOpen] = useState(false);
   const [goalsModalOpen, setGoalsModalOpen] = useState(false);
+  const [healthScoreSettingsOpen, setHealthScoreSettingsOpen] = useState(false);
+  // Bumped after a health-score settings save so `HealthScoreBadge` re-fetches
+  // the current date's score immediately, instead of waiting for a date change.
+  const [healthScoreRefreshKey, setHealthScoreRefreshKey] = useState(0);
 
   const { status, entries, totals, error, reload, addEntryLocally, updateEntryLocally, removeEntryLocally } =
     useDailyLog(date);
@@ -43,7 +49,19 @@ function App() {
       <div className="flex flex-col gap-3">
         <DaySummary date={date} onDateChange={setDate} totals={totals} goals={goals} />
 
-        <div className="flex justify-end">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="flex items-center gap-1.5">
+            <HealthScoreBadge date={date} refreshKey={healthScoreRefreshKey} />
+            <button
+              type="button"
+              onClick={() => setHealthScoreSettingsOpen(true)}
+              aria-label="Health score settings"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted transition-colors hover:text-black/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+            >
+              <Gear size={14} weight="light" aria-hidden="true" />
+            </button>
+          </div>
+
           <button
             type="button"
             onClick={() => setGoalsModalOpen(true)}
@@ -86,6 +104,13 @@ function App() {
 
       {goalsModalOpen && (
         <GoalsModal goals={goals} onClose={() => setGoalsModalOpen(false)} onSaved={setGoals} />
+      )}
+
+      {healthScoreSettingsOpen && (
+        <HealthScoreSettingsModal
+          onClose={() => setHealthScoreSettingsOpen(false)}
+          onSaved={() => setHealthScoreRefreshKey((key) => key + 1)}
+        />
       )}
     </main>
   );

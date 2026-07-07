@@ -33,6 +33,7 @@ function makeEntry(id: number): EnrichedEntry {
       sugarPer100g: null,
       sodiumPer100g: null,
       novaGroup: null,
+      foodGroup: null,
     },
   };
 }

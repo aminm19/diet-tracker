@@ -5,6 +5,7 @@ import { cors } from "hono/cors";
 import { SHARED_SCAFFOLD_MARKER } from "shared";
 import { foodsRoute } from "./routes/foods.js";
 import { goalsRoute } from "./routes/goals.js";
+import { healthScoreRoute } from "./routes/healthScore.js";
 import { logsRoute } from "./routes/logs.js";
 
 const app = new Hono();
@@ -22,6 +23,7 @@ app.get("/health", (c) => {
 
 app.route("/api/foods", foodsRoute);
 app.route("/api/goals", goalsRoute);
+app.route("/api/health-score", healthScoreRoute);
 app.route("/api/logs", logsRoute);
 
 const isMainModule = process.argv[1] === fileURLToPath(import.meta.url);
