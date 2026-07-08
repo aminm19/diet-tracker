@@ -1,9 +1,10 @@
 // Tests for the log CRUD service. The DB client is mocked with a small
 // in-memory fake table (mirroring the pattern in foodSearch.test.ts) that
-// interprets real `eq()` conditions produced by drizzle-orm, so we exercise
-// the actual query-building wiring rather than just asserting mocks were
-// called. `getFoodById` (from the food search service) is mocked directly
-// since log creation/recompute depends on it, not on the `foods` table.
+// interprets real `eq()`/`and()` conditions produced by drizzle-orm, so we
+// exercise the actual query-building wiring rather than just asserting mocks
+// were called. `getFoodById` (from the food search service) is mocked
+// directly since log creation/recompute depends on it, not on the `foods`
+// table.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Food } from "shared";
 
@@ -11,6 +12,7 @@ import type { Food } from "shared";
 
 interface FakeLogRow {
   id: number;
+  visitorId: string;
   loggedDate: string;
   foodId: number;
   amount: string;
@@ -30,6 +32,7 @@ interface FakeLogRow {
 // maps between the two.
 const COLUMN_NAME_TO_KEY: Record<string, keyof FakeLogRow> = {
   id: "id",
+  visitor_id: "visitorId",
   logged_date: "loggedDate",
   food_id: "foodId",
   amount: "amount",
@@ -42,28 +45,54 @@ const COLUMN_NAME_TO_KEY: Record<string, keyof FakeLogRow> = {
   sodium: "sodium",
 };
 
-// Extracts `{ key, value }` from a real `eq(column, value)` condition object
-// (a drizzle-orm `SQL` instance) without depending on unexported internal
-// classes — column chunks carry `name`/`columnType`, the bound value chunk
-// carries `value`/`encoder`.
-function extractEqCondition(condition: unknown): { key: keyof FakeLogRow; value: unknown } {
-  const chunks = (condition as { queryChunks: unknown[] }).queryChunks;
-  const columnChunk = chunks.find(
-    (c): c is { name: string } =>
-      typeof c === "object" && c !== null && "name" in c && "columnType" in c,
-  );
-  const paramChunk = chunks.find(
-    (c): c is { value: unknown } =>
-      typeof c === "object" && c !== null && "value" in c && "encoder" in c,
-  );
-  if (!columnChunk || !paramChunk) {
-    throw new Error("Fake db: could not parse eq() condition");
+// Extracts every `{ key, value }` pair from a real `eq()`/`and(eq(), eq())`
+// condition (a drizzle-orm `SQL` instance) without depending on unexported
+// internal classes — column chunks carry `name`/`columnType`, the bound
+// value chunk carries `value`/`encoder`. `and()` nests its child `eq()` SQL
+// instances inside its own `queryChunks`, so this recurses to flatten them;
+// each column chunk is paired with the next value chunk encountered (the
+// order `eq()` always emits them in).
+function extractConditions(condition: unknown): Array<{ key: keyof FakeLogRow; value: unknown }> {
+  const results: Array<{ key: keyof FakeLogRow; value: unknown }> = [];
+  let pendingColumn: string | null = null;
+
+  function walk(node: unknown): void {
+    if (typeof node !== "object" || node === null) return;
+
+    if ("name" in node && "columnType" in node) {
+      pendingColumn = (node as { name: string }).name;
+      return;
+    }
+
+    if ("value" in node && "encoder" in node) {
+      if (pendingColumn) {
+        const key = COLUMN_NAME_TO_KEY[pendingColumn];
+        if (!key) {
+          throw new Error(`Fake db: unmapped column name "${pendingColumn}"`);
+        }
+        results.push({ key, value: (node as { value: unknown }).value });
+        pendingColumn = null;
+      }
+      return;
+    }
+
+    if ("queryChunks" in node) {
+      for (const chunk of (node as { queryChunks: unknown[] }).queryChunks) {
+        walk(chunk);
+      }
+    }
   }
-  const key = COLUMN_NAME_TO_KEY[columnChunk.name];
-  if (!key) {
-    throw new Error(`Fake db: unmapped column name "${columnChunk.name}"`);
+
+  walk(condition);
+
+  if (results.length === 0) {
+    throw new Error("Fake db: could not parse eq()/and() condition");
   }
-  return { key, value: paramChunk.value };
+  return results;
+}
+
+function matchesAll(row: FakeLogRow, conditions: Array<{ key: keyof FakeLogRow; value: unknown }>): boolean {
+  return conditions.every(({ key, value }) => row[key] === value);
 }
 
 let store: FakeLogRow[];
@@ -77,6 +106,7 @@ vi.mock("../db/client.js", () => {
           returning: async () => {
             const row: FakeLogRow = {
               id: nextId++,
+              visitorId: values.visitorId as string,
               loggedDate: values.loggedDate as string,
               foodId: values.foodId as number,
               amount: values.amount as string,
@@ -98,8 +128,8 @@ vi.mock("../db/client.js", () => {
       select: () => ({
         from: () => ({
           where: async (condition: unknown) => {
-            const { key, value } = extractEqCondition(condition);
-            return store.filter((row) => row[key] === value);
+            const conditions = extractConditions(condition);
+            return store.filter((row) => matchesAll(row, conditions));
           },
         }),
       }),
@@ -107,8 +137,8 @@ vi.mock("../db/client.js", () => {
         set: (patch: Record<string, unknown>) => ({
           where: (condition: unknown) => ({
             returning: async () => {
-              const { key, value } = extractEqCondition(condition);
-              const row = store.find((r) => r[key] === value);
+              const conditions = extractConditions(condition);
+              const row = store.find((r) => matchesAll(r, conditions));
               if (!row) return [];
               Object.assign(row, patch);
               return [row];
@@ -119,8 +149,8 @@ vi.mock("../db/client.js", () => {
       delete: () => ({
         where: (condition: unknown) => ({
           returning: async () => {
-            const { key, value } = extractEqCondition(condition);
-            const idx = store.findIndex((r) => r[key] === value);
+            const conditions = extractConditions(condition);
+            const idx = store.findIndex((r) => matchesAll(r, conditions));
             if (idx === -1) return [];
             const [removed] = store.splice(idx, 1);
             return removed ? [removed] : [];
@@ -142,6 +172,9 @@ const { createLog, deleteLog, getLogsByDate, InvalidServingSizeError, updateLog 
 );
 
 // --- Fixtures ---
+
+const VISITOR_A = "visitor-a";
+const VISITOR_B = "visitor-b";
 
 const usdaChicken: Food = {
   id: 1,
@@ -189,12 +222,15 @@ describe("createLog — unit conversion + snapshotting", () => {
   it("converts grams directly (scaleFactor = amount / 100)", async () => {
     getFoodById.mockResolvedValue(usdaChicken);
 
-    const entry = await createLog({
-      foodId: 1,
-      loggedDate: "2026-07-01",
-      amount: 200,
-      unit: "g",
-    });
+    const entry = await createLog(
+      {
+        foodId: 1,
+        loggedDate: "2026-07-01",
+        amount: 200,
+        unit: "g",
+      },
+      VISITOR_A,
+    );
 
     expect(entry).not.toBeNull();
     // 200g -> scaleFactor 2 -> 143 * 2 = 286
@@ -211,12 +247,15 @@ describe("createLog — unit conversion + snapshotting", () => {
   it("converts ounces to grams using 28.3495 g/oz", async () => {
     getFoodById.mockResolvedValue(usdaChicken);
 
-    const entry = await createLog({
-      foodId: 1,
-      loggedDate: "2026-07-01",
-      amount: 4,
-      unit: "oz",
-    });
+    const entry = await createLog(
+      {
+        foodId: 1,
+        loggedDate: "2026-07-01",
+        amount: 4,
+        unit: "oz",
+      },
+      VISITOR_A,
+    );
 
     // 4oz -> 113.398g -> scaleFactor 1.13398
     const expectedCalories = 143 * ((4 * 28.3495) / 100);
@@ -226,12 +265,15 @@ describe("createLog — unit conversion + snapshotting", () => {
   it("converts servings using the food's servingSize when present", async () => {
     getFoodById.mockResolvedValue(offPizza);
 
-    const entry = await createLog({
-      foodId: 2,
-      loggedDate: "2026-07-01",
-      amount: 2,
-      unit: "serving",
-    });
+    const entry = await createLog(
+      {
+        foodId: 2,
+        loggedDate: "2026-07-01",
+        amount: 2,
+        unit: "serving",
+      },
+      VISITOR_A,
+    );
 
     // 2 servings * 150g = 300g -> scaleFactor 3
     expect(entry!.calories).toBeCloseTo(750);
@@ -246,19 +288,22 @@ describe("createLog — unit conversion + snapshotting", () => {
     getFoodById.mockResolvedValue(usdaChicken);
 
     await expect(
-      createLog({ foodId: 1, loggedDate: "2026-07-01", amount: 1, unit: "serving" }),
+      createLog({ foodId: 1, loggedDate: "2026-07-01", amount: 1, unit: "serving" }, VISITOR_A),
     ).rejects.toThrow(InvalidServingSizeError);
   });
 
   it("returns null when the food id doesn't resolve (route maps this to 404)", async () => {
     getFoodById.mockResolvedValue(null);
 
-    const entry = await createLog({
-      foodId: 999,
-      loggedDate: "2026-07-01",
-      amount: 100,
-      unit: "g",
-    });
+    const entry = await createLog(
+      {
+        foodId: 999,
+        loggedDate: "2026-07-01",
+        amount: 100,
+        unit: "g",
+      },
+      VISITOR_A,
+    );
 
     expect(entry).toBeNull();
   });
@@ -267,15 +312,18 @@ describe("createLog — unit conversion + snapshotting", () => {
 describe("updateLog — snapshot recompute", () => {
   it("recomputes the snapshot when amount changes, not just the raw field", async () => {
     getFoodById.mockResolvedValue(usdaChicken);
-    const created = await createLog({
-      foodId: 1,
-      loggedDate: "2026-07-01",
-      amount: 100,
-      unit: "g",
-    });
+    const created = await createLog(
+      {
+        foodId: 1,
+        loggedDate: "2026-07-01",
+        amount: 100,
+        unit: "g",
+      },
+      VISITOR_A,
+    );
     expect(created!.calories).toBeCloseTo(143);
 
-    const updated = await updateLog(created!.id, { amount: 200 });
+    const updated = await updateLog(created!.id, { amount: 200 }, VISITOR_A);
 
     expect(updated!.amount).toBe(200);
     // Must be recomputed from the food's per-100g values, not simply doubled
@@ -286,15 +334,18 @@ describe("updateLog — snapshot recompute", () => {
 
   it("recomputes the snapshot when unit changes", async () => {
     getFoodById.mockResolvedValue(offPizza);
-    const created = await createLog({
-      foodId: 2,
-      loggedDate: "2026-07-01",
-      amount: 1,
-      unit: "serving",
-    });
+    const created = await createLog(
+      {
+        foodId: 2,
+        loggedDate: "2026-07-01",
+        amount: 1,
+        unit: "serving",
+      },
+      VISITOR_A,
+    );
     expect(created!.calories).toBeCloseTo(375); // 150g -> scaleFactor 1.5
 
-    const updated = await updateLog(created!.id, { amount: 100, unit: "g" });
+    const updated = await updateLog(created!.id, { amount: 100, unit: "g" }, VISITOR_A);
 
     expect(updated!.unit).toBe("g");
     expect(updated!.calories).toBeCloseTo(250); // 100g -> scaleFactor 1
@@ -302,15 +353,18 @@ describe("updateLog — snapshot recompute", () => {
 
   it("does not recompute (or look up the food) when only loggedDate changes", async () => {
     getFoodById.mockResolvedValue(usdaChicken);
-    const created = await createLog({
-      foodId: 1,
-      loggedDate: "2026-07-01",
-      amount: 100,
-      unit: "g",
-    });
+    const created = await createLog(
+      {
+        foodId: 1,
+        loggedDate: "2026-07-01",
+        amount: 100,
+        unit: "g",
+      },
+      VISITOR_A,
+    );
     getFoodById.mockClear();
 
-    const updated = await updateLog(created!.id, { loggedDate: "2026-07-02" });
+    const updated = await updateLog(created!.id, { loggedDate: "2026-07-02" }, VISITOR_A);
 
     expect(updated!.loggedDate).toBe("2026-07-02");
     expect(updated!.calories).toBeCloseTo(143);
@@ -319,20 +373,23 @@ describe("updateLog — snapshot recompute", () => {
 
   it("rejects switching to unit: 'serving' on recompute if the food has no servingSize", async () => {
     getFoodById.mockResolvedValue(usdaChicken);
-    const created = await createLog({
-      foodId: 1,
-      loggedDate: "2026-07-01",
-      amount: 100,
-      unit: "g",
-    });
+    const created = await createLog(
+      {
+        foodId: 1,
+        loggedDate: "2026-07-01",
+        amount: 100,
+        unit: "g",
+      },
+      VISITOR_A,
+    );
 
-    await expect(updateLog(created!.id, { unit: "serving" })).rejects.toThrow(
+    await expect(updateLog(created!.id, { unit: "serving" }, VISITOR_A)).rejects.toThrow(
       InvalidServingSizeError,
     );
   });
 
   it("returns null for a nonexistent log id", async () => {
-    const updated = await updateLog(12345, { amount: 50 });
+    const updated = await updateLog(12345, { amount: 50 }, VISITOR_A);
     expect(updated).toBeNull();
   });
 });
@@ -340,21 +397,24 @@ describe("updateLog — snapshot recompute", () => {
 describe("deleteLog", () => {
   it("deletes an existing log and returns true", async () => {
     getFoodById.mockResolvedValue(usdaChicken);
-    const created = await createLog({
-      foodId: 1,
-      loggedDate: "2026-07-01",
-      amount: 100,
-      unit: "g",
-    });
+    const created = await createLog(
+      {
+        foodId: 1,
+        loggedDate: "2026-07-01",
+        amount: 100,
+        unit: "g",
+      },
+      VISITOR_A,
+    );
 
-    const result = await deleteLog(created!.id);
+    const result = await deleteLog(created!.id, VISITOR_A);
 
     expect(result).toBe(true);
     expect(store).toHaveLength(0);
   });
 
   it("returns false for a nonexistent log id", async () => {
-    const result = await deleteLog(99999);
+    const result = await deleteLog(99999, VISITOR_A);
     expect(result).toBe(false);
   });
 });
@@ -363,12 +423,15 @@ describe("adversarial gap-hunting — service-level, bypasses route/Zod validati
   it("does NOT itself reject a non-positive amount (only the route's Zod schema does) — documents a defense-in-depth gap", async () => {
     getFoodById.mockResolvedValue(usdaChicken);
 
-    const entry = await createLog({
-      foodId: 1,
-      loggedDate: "2026-07-01",
-      amount: -50,
-      unit: "g",
-    });
+    const entry = await createLog(
+      {
+        foodId: 1,
+        loggedDate: "2026-07-01",
+        amount: -50,
+        unit: "g",
+      },
+      VISITOR_A,
+    );
 
     // No validation error thrown; a negative snapshot is silently persisted.
     // Safe today only because the route layer's Zod schema (`amount:
@@ -381,15 +444,18 @@ describe("adversarial gap-hunting — service-level, bypasses route/Zod validati
 
   it("updateLog with an empty patch object no-ops without crashing (route's Zod .refine() is what actually blocks `{}` over HTTP)", async () => {
     getFoodById.mockResolvedValue(usdaChicken);
-    const created = await createLog({
-      foodId: 1,
-      loggedDate: "2026-07-01",
-      amount: 100,
-      unit: "g",
-    });
+    const created = await createLog(
+      {
+        foodId: 1,
+        loggedDate: "2026-07-01",
+        amount: 100,
+        unit: "g",
+      },
+      VISITOR_A,
+    );
     getFoodById.mockClear();
 
-    const updated = await updateLog(created!.id, {});
+    const updated = await updateLog(created!.id, {}, VISITOR_A);
 
     expect(updated).not.toBeNull();
     expect(updated!.amount).toBe(100);
@@ -399,15 +465,18 @@ describe("adversarial gap-hunting — service-level, bypasses route/Zod validati
 
   it("updateLog with only `unit` changed keeps the existing amount (doesn't reset it to a default)", async () => {
     getFoodById.mockResolvedValue(offPizza);
-    const created = await createLog({
-      foodId: 2,
-      loggedDate: "2026-07-01",
-      amount: 3,
-      unit: "serving",
-    });
+    const created = await createLog(
+      {
+        foodId: 2,
+        loggedDate: "2026-07-01",
+        amount: 3,
+        unit: "serving",
+      },
+      VISITOR_A,
+    );
     expect(created!.calories).toBeCloseTo(1125); // 3 * 150g -> scaleFactor 4.5
 
-    const updated = await updateLog(created!.id, { unit: "g" });
+    const updated = await updateLog(created!.id, { unit: "g" }, VISITOR_A);
 
     expect(updated!.amount).toBe(3); // amount untouched
     expect(updated!.unit).toBe("g");
@@ -416,19 +485,22 @@ describe("adversarial gap-hunting — service-level, bypasses route/Zod validati
 
   it("throws a generic (uncaught-by-route) Error if the log's food no longer resolves at update time", async () => {
     getFoodById.mockResolvedValue(usdaChicken);
-    const created = await createLog({
-      foodId: 1,
-      loggedDate: "2026-07-01",
-      amount: 100,
-      unit: "g",
-    });
+    const created = await createLog(
+      {
+        foodId: 1,
+        loggedDate: "2026-07-01",
+        amount: 100,
+        unit: "g",
+      },
+      VISITOR_A,
+    );
 
     // Simulate the food having disappeared out from under the log between
     // create and update (no delete-food endpoint exists yet, but the code
     // guards against it defensively).
     getFoodById.mockResolvedValue(null);
 
-    await expect(updateLog(created!.id, { amount: 200 })).rejects.toThrow(
+    await expect(updateLog(created!.id, { amount: 200 }, VISITOR_A)).rejects.toThrow(
       /no longer exists/,
     );
     // Note: this is a plain Error, not `InvalidServingSizeError` — the route
@@ -439,7 +511,7 @@ describe("adversarial gap-hunting — service-level, bypasses route/Zod validati
 
 describe("getLogsByDate — totals", () => {
   it("returns zero totals (not null/undefined) when there are no entries for the date", async () => {
-    const result = await getLogsByDate("2026-07-05");
+    const result = await getLogsByDate("2026-07-05", VISITOR_A);
 
     expect(result.entries).toEqual([]);
     expect(result.totals).toEqual({ calories: 0, protein: 0, carbs: 0, fat: 0 });
@@ -447,14 +519,58 @@ describe("getLogsByDate — totals", () => {
 
   it("sums snapshotted macros across all entries for the date, ignoring other dates", async () => {
     getFoodById.mockResolvedValue(usdaChicken);
-    await createLog({ foodId: 1, loggedDate: "2026-07-01", amount: 100, unit: "g" }); // 143 cal
-    await createLog({ foodId: 1, loggedDate: "2026-07-01", amount: 200, unit: "g" }); // 286 cal
-    await createLog({ foodId: 1, loggedDate: "2026-07-02", amount: 100, unit: "g" }); // different date
+    await createLog({ foodId: 1, loggedDate: "2026-07-01", amount: 100, unit: "g" }, VISITOR_A); // 143 cal
+    await createLog({ foodId: 1, loggedDate: "2026-07-01", amount: 200, unit: "g" }, VISITOR_A); // 286 cal
+    await createLog({ foodId: 1, loggedDate: "2026-07-02", amount: 100, unit: "g" }, VISITOR_A); // different date
 
-    const result = await getLogsByDate("2026-07-01");
+    const result = await getLogsByDate("2026-07-01", VISITOR_A);
 
     expect(result.entries).toHaveLength(2);
     expect(result.totals.calories).toBeCloseTo(429);
     expect(result.totals.protein).toBeCloseTo(55.53);
+  });
+});
+
+describe("visitor isolation", () => {
+  it("getLogsByDate only returns the requesting visitor's entries for a shared date", async () => {
+    getFoodById.mockResolvedValue(usdaChicken);
+    await createLog({ foodId: 1, loggedDate: "2026-07-01", amount: 100, unit: "g" }, VISITOR_A);
+    await createLog({ foodId: 1, loggedDate: "2026-07-01", amount: 200, unit: "g" }, VISITOR_B);
+
+    const resultA = await getLogsByDate("2026-07-01", VISITOR_A);
+    const resultB = await getLogsByDate("2026-07-01", VISITOR_B);
+
+    expect(resultA.entries).toHaveLength(1);
+    expect(resultA.entries[0]!.amount).toBe(100);
+    expect(resultB.entries).toHaveLength(1);
+    expect(resultB.entries[0]!.amount).toBe(200);
+  });
+
+  it("updateLog against another visitor's log id returns null rather than updating it", async () => {
+    getFoodById.mockResolvedValue(usdaChicken);
+    const created = await createLog(
+      { foodId: 1, loggedDate: "2026-07-01", amount: 100, unit: "g" },
+      VISITOR_A,
+    );
+
+    const result = await updateLog(created!.id, { amount: 999 }, VISITOR_B);
+
+    expect(result).toBeNull();
+    // Underlying row is untouched.
+    const stillThere = await getLogsByDate("2026-07-01", VISITOR_A);
+    expect(stillThere.entries[0]!.amount).toBe(100);
+  });
+
+  it("deleteLog against another visitor's log id returns false rather than deleting it", async () => {
+    getFoodById.mockResolvedValue(usdaChicken);
+    const created = await createLog(
+      { foodId: 1, loggedDate: "2026-07-01", amount: 100, unit: "g" },
+      VISITOR_A,
+    );
+
+    const result = await deleteLog(created!.id, VISITOR_B);
+
+    expect(result).toBe(false);
+    expect(store).toHaveLength(1);
   });
 });

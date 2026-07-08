@@ -27,9 +27,12 @@ async function main() {
   if (!food) throw new Error("Insert into foods returned no row");
   console.log("  foods:", food.id, food.name);
 
+  const smokeTestVisitorId = "smoke-test-visitor";
+
   const [log] = await db
     .insert(foodLogs)
     .values({
+      visitorId: smokeTestVisitorId,
       loggedDate: "2026-07-05",
       foodId: food.id,
       amount: "150",
@@ -47,6 +50,7 @@ async function main() {
   const [goal] = await db
     .insert(goals)
     .values({
+      visitorId: smokeTestVisitorId,
       calories: "2000",
       protein: "150",
       carbs: "200",
@@ -57,7 +61,10 @@ async function main() {
   if (!goal) throw new Error("Insert into goals returned no row");
   console.log("  goals:", goal.id, goal.calories);
 
-  const [settings] = await db.insert(healthScoreSettings).values({}).returning();
+  const [settings] = await db
+    .insert(healthScoreSettings)
+    .values({ visitorId: smokeTestVisitorId })
+    .returning();
 
   if (!settings) throw new Error("Insert into health_score_settings returned no row");
   console.log("  health_score_settings:", settings.id, settings.enabled);

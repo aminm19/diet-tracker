@@ -38,27 +38,36 @@ function rowToSettings(row: typeof healthScoreSettings.$inferSelect): HealthScor
   };
 }
 
-// Returns the existing settings row, or creates one using the schema's
-// column defaults if none exists yet (rather than returning `null` — see
-// module doc comment).
-export async function getHealthScoreSettings(): Promise<HealthScoreSettings> {
-  const [existing] = await db.select().from(healthScoreSettings);
+// Returns the existing settings row for this visitor, or creates one using
+// the schema's column defaults if none exists yet (rather than returning
+// `null` — see module doc comment).
+export async function getHealthScoreSettings(visitorId: string): Promise<HealthScoreSettings> {
+  const [existing] = await db
+    .select()
+    .from(healthScoreSettings)
+    .where(eq(healthScoreSettings.visitorId, visitorId));
   if (existing) return rowToSettings(existing);
 
-  const [row] = await db.insert(healthScoreSettings).values({}).returning();
+  const [row] = await db.insert(healthScoreSettings).values({ visitorId }).returning();
   if (!row) {
     throw new Error("Insert into health_score_settings returned no row");
   }
   return rowToSettings(row);
 }
 
-// Inserts a new row if none exists yet, otherwise updates the existing one.
+// Inserts a new row if none exists yet for this visitor, otherwise updates
+// the existing one.
 export async function upsertHealthScoreSettings(
   input: HealthScoreSettings,
+  visitorId: string,
 ): Promise<HealthScoreSettings> {
-  const [existing] = await db.select().from(healthScoreSettings);
+  const [existing] = await db
+    .select()
+    .from(healthScoreSettings)
+    .where(eq(healthScoreSettings.visitorId, visitorId));
 
   const values = {
+    visitorId,
     enabled: input.enabled,
     processingEnabled: input.processingEnabled,
     processingWeight: numericToString(input.processingWeight)!,
@@ -224,9 +233,9 @@ function windowDates(endDate: string, days: number): string[] {
 // in the window. Reuses `getLogsByDate` per day in the window (same
 // per-day query the other three factors use) rather than a bespoke
 // multi-day range query.
-async function computeVarietyScore(date: string): Promise<number | null> {
+async function computeVarietyScore(date: string, visitorId: string): Promise<number | null> {
   const dates = windowDates(date, VARIETY_WINDOW_DAYS);
-  const entriesPerDay = await Promise.all(dates.map((d) => getLogsByDate(d)));
+  const entriesPerDay = await Promise.all(dates.map((d) => getLogsByDate(d, visitorId)));
   const windowEntries = entriesPerDay.flatMap((day) => day.entries);
 
   if (windowEntries.length === 0) return null;
@@ -264,14 +273,17 @@ interface FactorInput {
 // `goals` is fetched once here (rather than inside `computeMacroFitScore`)
 // so it can be shared with `computeDietMessage` without a second DB
 // round-trip; both consume the same `entries`/`totals` fetched up front too.
-export async function computeHealthScore(date: string): Promise<HealthScoreResult> {
-  const settings = await getHealthScoreSettings();
+export async function computeHealthScore(
+  date: string,
+  visitorId: string,
+): Promise<HealthScoreResult> {
+  const settings = await getHealthScoreSettings(visitorId);
   if (!settings.enabled) {
     return { status: "hidden" };
   }
 
-  const { entries } = await getLogsByDate(date);
-  const goals = await getGoals();
+  const { entries } = await getLogsByDate(date, visitorId);
+  const goals = await getGoals(visitorId);
   const totals = computeLogTotals(entries);
 
   const [processingScore, macroFitScore, sugarSodiumScore, varietyScore] = await Promise.all([
@@ -282,7 +294,7 @@ export async function computeHealthScore(date: string): Promise<HealthScoreResul
     settings.sugarSodiumEnabled
       ? Promise.resolve(computeSugarSodiumScore(entries))
       : Promise.resolve(null),
-    settings.varietyEnabled ? computeVarietyScore(date) : Promise.resolve(null),
+    settings.varietyEnabled ? computeVarietyScore(date, visitorId) : Promise.resolve(null),
   ]);
 
   const message = computeDietMessage(entries, totals, goals);

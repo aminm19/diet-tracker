@@ -6,10 +6,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
-// --- Fake DB (in-memory `goals` table, singleton in practice) ---
+// --- Fake DB (in-memory `goals` table, one row per visitor) ---
 
 interface FakeGoalsRow {
   id: number;
+  visitorId: string;
   calories: string;
   protein: string;
   carbs: string;
@@ -17,7 +18,15 @@ interface FakeGoalsRow {
   updatedAt: Date;
 }
 
-function extractEqCondition(condition: unknown): { key: string; value: unknown } {
+// Maps the real DB column name (snake_case, as defined in shared/src/schema.ts)
+// to the fake row's JS property key (camelCase) — mirrors how Drizzle itself
+// maps between the two.
+const COLUMN_NAME_TO_KEY: Record<string, keyof FakeGoalsRow> = {
+  id: "id",
+  visitor_id: "visitorId",
+};
+
+function extractEqCondition(condition: unknown): { key: keyof FakeGoalsRow; value: unknown } {
   const chunks = (condition as { queryChunks: unknown[] }).queryChunks;
   const columnChunk = chunks.find(
     (c): c is { name: string } =>
@@ -30,7 +39,11 @@ function extractEqCondition(condition: unknown): { key: string; value: unknown }
   if (!columnChunk || !paramChunk) {
     throw new Error("Fake db: could not parse eq() condition");
   }
-  return { key: columnChunk.name, value: paramChunk.value };
+  const key = COLUMN_NAME_TO_KEY[columnChunk.name];
+  if (!key) {
+    throw new Error(`Fake db: unmapped column name "${columnChunk.name}"`);
+  }
+  return { key, value: paramChunk.value };
 }
 
 let store: FakeGoalsRow[];
@@ -44,6 +57,7 @@ vi.mock("../db/client.js", () => {
           returning: async () => {
             const row: FakeGoalsRow = {
               id: nextId++,
+              visitorId: values.visitorId as string,
               calories: values.calories as string,
               protein: values.protein as string,
               carbs: values.carbs as string,
@@ -56,7 +70,12 @@ vi.mock("../db/client.js", () => {
         }),
       }),
       select: () => ({
-        from: async () => store,
+        from: () => ({
+          where: async (condition: unknown) => {
+            const { key, value } = extractEqCondition(condition);
+            return store.filter((row) => row[key] === value);
+          },
+        }),
       }),
       update: () => ({
         set: (patch: Record<string, unknown>) => ({
@@ -77,6 +96,10 @@ vi.mock("../db/client.js", () => {
 
 const { getGoals, upsertGoals } = await import("./goals.js");
 const { goalsRoute } = await import("../routes/goals.js");
+const { visitorIdMiddleware } = await import("../middleware/visitorId.js");
+
+const VISITOR_A = "visitor-a";
+const VISITOR_B = "visitor-b";
 
 beforeEach(() => {
   store = [];
@@ -84,48 +107,70 @@ beforeEach(() => {
 });
 
 describe("getGoals", () => {
-  it("returns null when no row exists yet (goals unset)", async () => {
-    const result = await getGoals();
+  it("returns null when no row exists yet for this visitor (goals unset)", async () => {
+    const result = await getGoals(VISITOR_A);
     expect(result).toBeNull();
   });
 
   it("returns the goals after a row has been inserted (insert-then-get round-trips)", async () => {
-    await upsertGoals({ calories: 2000, protein: 150, carbs: 200, fat: 65 });
+    await upsertGoals({ calories: 2000, protein: 150, carbs: 200, fat: 65 }, VISITOR_A);
 
-    const result = await getGoals();
+    const result = await getGoals(VISITOR_A);
 
     expect(result).toEqual({ calories: 2000, protein: 150, carbs: 200, fat: 65 });
   });
 });
 
 describe("upsertGoals", () => {
-  it("inserts a new row when none exists", async () => {
-    const result = await upsertGoals({ calories: 2000, protein: 150, carbs: 200, fat: 65 });
+  it("inserts a new row when none exists for this visitor", async () => {
+    const result = await upsertGoals({ calories: 2000, protein: 150, carbs: 200, fat: 65 }, VISITOR_A);
 
     expect(result).toEqual({ calories: 2000, protein: 150, carbs: 200, fat: 65 });
     expect(store).toHaveLength(1);
   });
 
   it("updates the existing row on a second call, rather than inserting a second row", async () => {
-    await upsertGoals({ calories: 2000, protein: 150, carbs: 200, fat: 65 });
-    const updated = await upsertGoals({ calories: 2200, protein: 160, carbs: 220, fat: 70 });
+    await upsertGoals({ calories: 2000, protein: 150, carbs: 200, fat: 65 }, VISITOR_A);
+    const updated = await upsertGoals({ calories: 2200, protein: 160, carbs: 220, fat: 70 }, VISITOR_A);
 
     expect(updated).toEqual({ calories: 2200, protein: 160, carbs: 220, fat: 70 });
     expect(store).toHaveLength(1);
 
-    const result = await getGoals();
+    const result = await getGoals(VISITOR_A);
     expect(result).toEqual({ calories: 2200, protein: 160, carbs: 220, fat: 70 });
+  });
+});
+
+describe("visitor isolation", () => {
+  it("two visitors' goals are stored and read back independently", async () => {
+    await upsertGoals({ calories: 2000, protein: 150, carbs: 200, fat: 65 }, VISITOR_A);
+    await upsertGoals({ calories: 1800, protein: 120, carbs: 180, fat: 55 }, VISITOR_B);
+
+    expect(await getGoals(VISITOR_A)).toEqual({ calories: 2000, protein: 150, carbs: 200, fat: 65 });
+    expect(await getGoals(VISITOR_B)).toEqual({ calories: 1800, protein: 120, carbs: 180, fat: 55 });
+    expect(store).toHaveLength(2);
+  });
+
+  it("upserting visitor B's goals does not affect visitor A's row", async () => {
+    await upsertGoals({ calories: 2000, protein: 150, carbs: 200, fat: 65 }, VISITOR_A);
+    await upsertGoals({ calories: 1800, protein: 120, carbs: 180, fat: 55 }, VISITOR_B);
+    await upsertGoals({ calories: 1900, protein: 130, carbs: 190, fat: 60 }, VISITOR_B);
+
+    expect(await getGoals(VISITOR_A)).toEqual({ calories: 2000, protein: 150, carbs: 200, fat: 65 });
+    expect(await getGoals(VISITOR_B)).toEqual({ calories: 1900, protein: 130, carbs: 190, fat: 60 });
+    expect(store).toHaveLength(2);
   });
 });
 
 describe("PUT /api/goals — route-level Zod validation", () => {
   const app = new Hono();
+  app.use("/api/goals/*", visitorIdMiddleware);
   app.route("/api/goals", goalsRoute);
 
   it("returns 200 with the saved goals for a valid body", async () => {
     const res = await app.request("/api/goals", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Visitor-Id": VISITOR_A },
       body: JSON.stringify({ calories: 2000, protein: 150, carbs: 200, fat: 65 }),
     });
 
@@ -136,7 +181,7 @@ describe("PUT /api/goals — route-level Zod validation", () => {
   it("returns 400 for a negative value", async () => {
     const res = await app.request("/api/goals", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Visitor-Id": VISITOR_A },
       body: JSON.stringify({ calories: -100, protein: 150, carbs: 200, fat: 65 }),
     });
 
@@ -147,8 +192,19 @@ describe("PUT /api/goals — route-level Zod validation", () => {
   it("returns 400 for a missing field", async () => {
     const res = await app.request("/api/goals", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Visitor-Id": VISITOR_A },
       body: JSON.stringify({ calories: 2000, protein: 150, carbs: 200 }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(store).toHaveLength(0);
+  });
+
+  it("returns 400 when the X-Visitor-Id header is missing", async () => {
+    const res = await app.request("/api/goals", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ calories: 2000, protein: 150, carbs: 200, fat: 65 }),
     });
 
     expect(res.status).toBe(400);
@@ -158,21 +214,37 @@ describe("PUT /api/goals — route-level Zod validation", () => {
 
 describe("GET /api/goals — route", () => {
   const app = new Hono();
+  app.use("/api/goals/*", visitorIdMiddleware);
   app.route("/api/goals", goalsRoute);
 
   it("returns 200 with null when goals are unset", async () => {
-    const res = await app.request("/api/goals");
+    const res = await app.request("/api/goals", { headers: { "X-Visitor-Id": VISITOR_A } });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toBeNull();
   });
 
   it("returns 200 with the saved goals once set", async () => {
-    await upsertGoals({ calories: 2000, protein: 150, carbs: 200, fat: 65 });
+    await upsertGoals({ calories: 2000, protein: 150, carbs: 200, fat: 65 }, VISITOR_A);
 
-    const res = await app.request("/api/goals");
+    const res = await app.request("/api/goals", { headers: { "X-Visitor-Id": VISITOR_A } });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ calories: 2000, protein: 150, carbs: 200, fat: 65 });
+  });
+
+  it("returns 400 when the X-Visitor-Id header is missing", async () => {
+    const res = await app.request("/api/goals");
+
+    expect(res.status).toBe(400);
+  });
+
+  it("scopes results to the requesting visitor — visitor B sees no goals after visitor A sets theirs", async () => {
+    await upsertGoals({ calories: 2000, protein: 150, carbs: 200, fat: 65 }, VISITOR_A);
+
+    const res = await app.request("/api/goals", { headers: { "X-Visitor-Id": VISITOR_B } });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toBeNull();
   });
 });

@@ -1,16 +1,19 @@
 // Route-level tests for /api/logs/*. The service layer is mocked so these
 // tests focus purely on Zod validation + status-code wiring, exercised
 // in-process via Hono's `app.request` (no real network server spun up) —
-// mirrors the pattern in routes/foods.test.ts.
+// mirrors the pattern in routes/foods.test.ts. The `visitorIdMiddleware` is
+// mounted here too (mirroring how `index.ts` wires it up), so requests must
+// carry an `X-Visitor-Id` header just like against the real app.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { LogEntry } from "shared";
 import type { CreateLogInput, LogsForDate, UpdateLogInput } from "../services/logs.js";
 
-const createLog = vi.fn<(input: CreateLogInput) => Promise<LogEntry | null>>();
-const getLogsByDate = vi.fn<(date: string) => Promise<LogsForDate>>();
-const updateLog = vi.fn<(id: number, patch: UpdateLogInput) => Promise<LogEntry | null>>();
-const deleteLog = vi.fn<(id: number) => Promise<boolean>>();
+const createLog = vi.fn<(input: CreateLogInput, visitorId: string) => Promise<LogEntry | null>>();
+const getLogsByDate = vi.fn<(date: string, visitorId: string) => Promise<LogsForDate>>();
+const updateLog =
+  vi.fn<(id: number, patch: UpdateLogInput, visitorId: string) => Promise<LogEntry | null>>();
+const deleteLog = vi.fn<(id: number, visitorId: string) => Promise<boolean>>();
 
 class FakeInvalidServingSizeError extends Error {
   constructor(foodName: string) {
@@ -20,21 +23,35 @@ class FakeInvalidServingSizeError extends Error {
 }
 
 vi.mock("../services/logs.js", () => ({
-  createLog: (input: CreateLogInput) => createLog(input),
-  getLogsByDate: (date: string) => getLogsByDate(date),
-  updateLog: (id: number, patch: UpdateLogInput) => updateLog(id, patch),
-  deleteLog: (id: number) => deleteLog(id),
+  createLog: (input: CreateLogInput, visitorId: string) => createLog(input, visitorId),
+  getLogsByDate: (date: string, visitorId: string) => getLogsByDate(date, visitorId),
+  updateLog: (id: number, patch: UpdateLogInput, visitorId: string) =>
+    updateLog(id, patch, visitorId),
+  deleteLog: (id: number, visitorId: string) => deleteLog(id, visitorId),
   InvalidServingSizeError: FakeInvalidServingSizeError,
 }));
 
 const { logsRoute } = await import("./logs.js");
 const { onError } = await import("../errorHandler.js");
+const { visitorIdMiddleware } = await import("../middleware/visitorId.js");
+
+const VISITOR_ID = "visitor-a";
 
 const app = new Hono();
+app.use("/api/logs/*", visitorIdMiddleware);
 app.route("/api/logs", logsRoute);
 // index.ts registers this same handler on the real app; wire it up here too
 // since these tests mount logsRoute on a standalone Hono instance.
 app.onError(onError);
+
+// Convenience wrapper so every existing test only has to add the header
+// once, at the request site, rather than duplicating it per test.
+function withVisitor(init: RequestInit = {}): RequestInit {
+  return {
+    ...init,
+    headers: { ...(init.headers ?? {}), "X-Visitor-Id": VISITOR_ID },
+  };
+}
 
 const sampleEntry: LogEntry = {
   id: 1,
@@ -63,25 +80,31 @@ describe("POST /api/logs", () => {
   it("returns 201 with the created entry for a valid body", async () => {
     createLog.mockResolvedValue(sampleEntry);
 
-    const res = await app.request("/api/logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(validBody),
-    });
+    const res = await app.request(
+      "/api/logs",
+      withVisitor({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validBody),
+      }),
+    );
 
     expect(res.status).toBe(201);
     expect(await res.json()).toEqual(sampleEntry);
-    expect(createLog).toHaveBeenCalledWith(validBody);
+    expect(createLog).toHaveBeenCalledWith(validBody, VISITOR_ID);
   });
 
   it("returns 404 when the food id doesn't exist", async () => {
     createLog.mockResolvedValue(null);
 
-    const res = await app.request("/api/logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(validBody),
-    });
+    const res = await app.request(
+      "/api/logs",
+      withVisitor({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(validBody),
+      }),
+    );
 
     expect(res.status).toBe(404);
   });
@@ -89,11 +112,14 @@ describe("POST /api/logs", () => {
   it("returns 400 when the service rejects an invalid serving-size request", async () => {
     createLog.mockRejectedValue(new FakeInvalidServingSizeError("Chicken roll"));
 
-    const res = await app.request("/api/logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...validBody, unit: "serving" }),
-    });
+    const res = await app.request(
+      "/api/logs",
+      withVisitor({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...validBody, unit: "serving" }),
+      }),
+    );
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
@@ -101,55 +127,70 @@ describe("POST /api/logs", () => {
   });
 
   it("returns 400 for a malformed loggedDate", async () => {
-    const res = await app.request("/api/logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...validBody, loggedDate: "07/01/2026" }),
-    });
+    const res = await app.request(
+      "/api/logs",
+      withVisitor({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...validBody, loggedDate: "07/01/2026" }),
+      }),
+    );
 
     expect(res.status).toBe(400);
     expect(createLog).not.toHaveBeenCalled();
   });
 
   it("returns 400 for a nonexistent calendar date (e.g. 2026-13-45)", async () => {
-    const res = await app.request("/api/logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...validBody, loggedDate: "2026-13-45" }),
-    });
+    const res = await app.request(
+      "/api/logs",
+      withVisitor({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...validBody, loggedDate: "2026-13-45" }),
+      }),
+    );
 
     expect(res.status).toBe(400);
     expect(createLog).not.toHaveBeenCalled();
   });
 
   it("returns 400 for an invalid unit value", async () => {
-    const res = await app.request("/api/logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...validBody, unit: "lbs" }),
-    });
+    const res = await app.request(
+      "/api/logs",
+      withVisitor({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...validBody, unit: "lbs" }),
+      }),
+    );
 
     expect(res.status).toBe(400);
     expect(createLog).not.toHaveBeenCalled();
   });
 
   it("returns 400 for a non-positive amount", async () => {
-    const res = await app.request("/api/logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...validBody, amount: 0 }),
-    });
+    const res = await app.request(
+      "/api/logs",
+      withVisitor({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...validBody, amount: 0 }),
+      }),
+    );
 
     expect(res.status).toBe(400);
     expect(createLog).not.toHaveBeenCalled();
   });
 
   it("returns 400 for a missing foodId", async () => {
-    const res = await app.request("/api/logs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ loggedDate: "2026-07-01", amount: 100, unit: "g" }),
-    });
+    const res = await app.request(
+      "/api/logs",
+      withVisitor({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ loggedDate: "2026-07-01", amount: 100, unit: "g" }),
+      }),
+    );
 
     expect(res.status).toBe(400);
     expect(createLog).not.toHaveBeenCalled();
@@ -164,22 +205,22 @@ describe("GET /api/logs", () => {
     };
     getLogsByDate.mockResolvedValue(payload);
 
-    const res = await app.request("/api/logs?date=2026-07-01");
+    const res = await app.request("/api/logs?date=2026-07-01", withVisitor());
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(payload);
-    expect(getLogsByDate).toHaveBeenCalledWith("2026-07-01");
+    expect(getLogsByDate).toHaveBeenCalledWith("2026-07-01", VISITOR_ID);
   });
 
   it("returns 400 for a missing date", async () => {
-    const res = await app.request("/api/logs");
+    const res = await app.request("/api/logs", withVisitor());
 
     expect(res.status).toBe(400);
     expect(getLogsByDate).not.toHaveBeenCalled();
   });
 
   it("returns 400 for a malformed date", async () => {
-    const res = await app.request("/api/logs?date=not-a-date");
+    const res = await app.request("/api/logs?date=not-a-date", withVisitor());
 
     expect(res.status).toBe(400);
     expect(getLogsByDate).not.toHaveBeenCalled();
@@ -191,25 +232,31 @@ describe("PATCH /api/logs/:id", () => {
     const updated = { ...sampleEntry, amount: 200, calories: 286 };
     updateLog.mockResolvedValue(updated);
 
-    const res = await app.request("/api/logs/1", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount: 200 }),
-    });
+    const res = await app.request(
+      "/api/logs/1",
+      withVisitor({
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: 200 }),
+      }),
+    );
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(updated);
-    expect(updateLog).toHaveBeenCalledWith(1, { amount: 200 });
+    expect(updateLog).toHaveBeenCalledWith(1, { amount: 200 }, VISITOR_ID);
   });
 
   it("returns 404 for a nonexistent log id", async () => {
     updateLog.mockResolvedValue(null);
 
-    const res = await app.request("/api/logs/999999", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount: 200 }),
-    });
+    const res = await app.request(
+      "/api/logs/999999",
+      withVisitor({
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: 200 }),
+      }),
+    );
 
     expect(res.status).toBe(404);
   });
@@ -217,43 +264,55 @@ describe("PATCH /api/logs/:id", () => {
   it("returns 400 when the recomputed snapshot hits an invalid serving-size request", async () => {
     updateLog.mockRejectedValue(new FakeInvalidServingSizeError("Chicken roll"));
 
-    const res = await app.request("/api/logs/1", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ unit: "serving" }),
-    });
+    const res = await app.request(
+      "/api/logs/1",
+      withVisitor({
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unit: "serving" }),
+      }),
+    );
 
     expect(res.status).toBe(400);
   });
 
   it("returns 400 for a non-numeric id", async () => {
-    const res = await app.request("/api/logs/not-a-number", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount: 200 }),
-    });
+    const res = await app.request(
+      "/api/logs/not-a-number",
+      withVisitor({
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount: 200 }),
+      }),
+    );
 
     expect(res.status).toBe(400);
     expect(updateLog).not.toHaveBeenCalled();
   });
 
   it("returns 400 for an empty body (no fields to update)", async () => {
-    const res = await app.request("/api/logs/1", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    const res = await app.request(
+      "/api/logs/1",
+      withVisitor({
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      }),
+    );
 
     expect(res.status).toBe(400);
     expect(updateLog).not.toHaveBeenCalled();
   });
 
   it("returns 400 for an invalid unit value", async () => {
-    const res = await app.request("/api/logs/1", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ unit: "lbs" }),
-    });
+    const res = await app.request(
+      "/api/logs/1",
+      withVisitor({
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unit: "lbs" }),
+      }),
+    );
 
     expect(res.status).toBe(400);
     expect(updateLog).not.toHaveBeenCalled();
@@ -264,24 +323,53 @@ describe("DELETE /api/logs/:id", () => {
   it("returns 204 when the log existed and was deleted", async () => {
     deleteLog.mockResolvedValue(true);
 
-    const res = await app.request("/api/logs/1", { method: "DELETE" });
+    const res = await app.request("/api/logs/1", withVisitor({ method: "DELETE" }));
 
     expect(res.status).toBe(204);
-    expect(deleteLog).toHaveBeenCalledWith(1);
+    expect(deleteLog).toHaveBeenCalledWith(1, VISITOR_ID);
   });
 
   it("returns 404 for a nonexistent log id", async () => {
     deleteLog.mockResolvedValue(false);
 
-    const res = await app.request("/api/logs/999999", { method: "DELETE" });
+    const res = await app.request("/api/logs/999999", withVisitor({ method: "DELETE" }));
 
     expect(res.status).toBe(404);
   });
 
   it("returns 400 for a non-numeric id", async () => {
-    const res = await app.request("/api/logs/not-a-number", { method: "DELETE" });
+    const res = await app.request("/api/logs/not-a-number", withVisitor({ method: "DELETE" }));
 
     expect(res.status).toBe(400);
     expect(deleteLog).not.toHaveBeenCalled();
+  });
+});
+
+describe("visitorIdMiddleware — missing header", () => {
+  it("returns 400 for POST with no X-Visitor-Id header", async () => {
+    const res = await app.request("/api/logs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ foodId: 1, loggedDate: "2026-07-01", amount: 100, unit: "g" }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(createLog).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for GET with no X-Visitor-Id header", async () => {
+    const res = await app.request("/api/logs?date=2026-07-01");
+
+    expect(res.status).toBe(400);
+    expect(getLogsByDate).not.toHaveBeenCalled();
+  });
+
+  it("returns 400 for an empty X-Visitor-Id header", async () => {
+    const res = await app.request("/api/logs?date=2026-07-01", {
+      headers: { "X-Visitor-Id": "" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(getLogsByDate).not.toHaveBeenCalled();
   });
 });

@@ -11,6 +11,7 @@ import type {
   LogEntry,
   UpdateLogRequest,
 } from "shared";
+import { getVisitorId } from "./visitorId";
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -29,6 +30,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      "X-Visitor-Id": getVisitorId(),
       ...init?.headers,
     },
   });

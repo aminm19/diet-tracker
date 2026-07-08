@@ -5,15 +5,27 @@
 // `getFoodById`, `getGoals`) are mocked directly, mirroring logs.test.ts's
 // approach to `getFoodById` — the composite logic is exercised against
 // concrete inputs, not against a fake DB.
+//
+// Visitor scoping: the real `computeHealthScore`/`getHealthScoreSettings`/
+// `upsertHealthScoreSettings` all now require a `visitorId`. Most of this
+// file's existing tests only care about the single-visitor behavior, so
+// `computeHealthScore`/`getHealthScoreSettings`/`upsertHealthScoreSettings`
+// below are thin wrappers around the real (`real`-prefixed) imports that
+// default to `VISITOR_A` — every call still passes a concrete, non-undefined
+// visitorId to the real implementation, it's just defaulted here rather than
+// repeated at each of this file's ~80 call sites. Isolation-specific tests
+// (see "visitor isolation" describe blocks) call the real functions directly
+// with explicit `VISITOR_A`/`VISITOR_B` arguments.
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 import type { Food, Goals, LogEntry } from "shared";
 import type { LogsForDate } from "./logs.js";
 
-// --- Fake DB (in-memory `health_score_settings` table, singleton in practice) ---
+// --- Fake DB (in-memory `health_score_settings` table, one row per visitor) ---
 
 interface FakeSettingsRow {
   id: number;
+  visitorId: string;
   enabled: boolean;
   processingEnabled: boolean;
   processingWeight: string;
@@ -38,7 +50,12 @@ const DEFAULTS = {
   varietyWeight: "0.25",
 };
 
-function extractEqCondition(condition: unknown): { key: string; value: unknown } {
+const COLUMN_NAME_TO_KEY: Record<string, keyof FakeSettingsRow> = {
+  id: "id",
+  visitor_id: "visitorId",
+};
+
+function extractEqCondition(condition: unknown): { key: keyof FakeSettingsRow; value: unknown } {
   const chunks = (condition as { queryChunks: unknown[] }).queryChunks;
   const columnChunk = chunks.find(
     (c): c is { name: string } =>
@@ -51,7 +68,11 @@ function extractEqCondition(condition: unknown): { key: string; value: unknown }
   if (!columnChunk || !paramChunk) {
     throw new Error("Fake db: could not parse eq() condition");
   }
-  return { key: columnChunk.name, value: paramChunk.value };
+  const key = COLUMN_NAME_TO_KEY[columnChunk.name];
+  if (!key) {
+    throw new Error(`Fake db: unmapped column name "${columnChunk.name}"`);
+  }
+  return { key, value: paramChunk.value };
 }
 
 let store: FakeSettingsRow[];
@@ -65,6 +86,7 @@ vi.mock("../db/client.js", () => {
           returning: async () => {
             const row: FakeSettingsRow = {
               id: nextId++,
+              visitorId: values.visitorId as string,
               enabled: (values.enabled as boolean) ?? DEFAULTS.enabled,
               processingEnabled: (values.processingEnabled as boolean) ?? DEFAULTS.processingEnabled,
               processingWeight: (values.processingWeight as string) ?? DEFAULTS.processingWeight,
@@ -83,14 +105,19 @@ vi.mock("../db/client.js", () => {
         }),
       }),
       select: () => ({
-        from: async () => store,
+        from: () => ({
+          where: async (condition: unknown) => {
+            const { key, value } = extractEqCondition(condition);
+            return store.filter((row) => row[key] === value);
+          },
+        }),
       }),
       update: () => ({
         set: (patch: Record<string, unknown>) => ({
           where: (condition: unknown) => ({
             returning: async () => {
-              const { value } = extractEqCondition(condition);
-              const row = store.find((r) => r.id === value);
+              const { key, value } = extractEqCondition(condition);
+              const row = store.find((r) => r[key] === value);
               if (!row) return [];
               Object.assign(row, patch);
               return [row];
@@ -102,9 +129,9 @@ vi.mock("../db/client.js", () => {
   };
 });
 
-const getLogsByDate = vi.fn<(date: string) => Promise<LogsForDate>>();
+const getLogsByDate = vi.fn<(date: string, visitorId: string) => Promise<LogsForDate>>();
 vi.mock("./logs.js", () => ({
-  getLogsByDate: (date: string) => getLogsByDate(date),
+  getLogsByDate: (date: string, visitorId: string) => getLogsByDate(date, visitorId),
 }));
 
 const getFoodById = vi.fn<(id: number) => Promise<Food | null>>();
@@ -112,17 +139,34 @@ vi.mock("./foodSearch.js", () => ({
   getFoodById: (id: number) => getFoodById(id),
 }));
 
-const getGoals = vi.fn<() => Promise<Goals | null>>();
+const getGoals = vi.fn<(visitorId: string) => Promise<Goals | null>>();
 vi.mock("./goals.js", () => ({
-  getGoals: () => getGoals(),
+  getGoals: (visitorId: string) => getGoals(visitorId),
 }));
 
 const {
-  computeHealthScore,
-  getHealthScoreSettings,
-  upsertHealthScoreSettings,
+  computeHealthScore: realComputeHealthScore,
+  getHealthScoreSettings: realGetHealthScoreSettings,
+  upsertHealthScoreSettings: realUpsertHealthScoreSettings,
 } = await import("./healthScore.js");
 const { healthScoreRoute } = await import("../routes/healthScore.js");
+const { visitorIdMiddleware } = await import("../middleware/visitorId.js");
+
+const VISITOR_A = "visitor-a";
+const VISITOR_B = "visitor-b";
+
+function computeHealthScore(date: string, visitorId: string = VISITOR_A) {
+  return realComputeHealthScore(date, visitorId);
+}
+function getHealthScoreSettings(visitorId: string = VISITOR_A) {
+  return realGetHealthScoreSettings(visitorId);
+}
+function upsertHealthScoreSettings(
+  input: Parameters<typeof realUpsertHealthScoreSettings>[0],
+  visitorId: string = VISITOR_A,
+) {
+  return realUpsertHealthScoreSettings(input, visitorId);
+}
 
 beforeEach(() => {
   store = [];
@@ -239,12 +283,13 @@ describe("upsertHealthScoreSettings", () => {
 
 describe("PUT /api/health-score/settings — route-level Zod validation", () => {
   const app = new Hono();
+  app.use("/api/health-score/*", visitorIdMiddleware);
   app.route("/api/health-score", healthScoreRoute);
 
   it("returns 200 with the saved settings for a valid body", async () => {
     const res = await app.request("/api/health-score/settings", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Visitor-Id": VISITOR_A },
       body: JSON.stringify(fullSettings),
     });
 
@@ -255,8 +300,19 @@ describe("PUT /api/health-score/settings — route-level Zod validation", () => 
   it("returns 400 when a weight is outside [0, 1]", async () => {
     const res = await app.request("/api/health-score/settings", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Visitor-Id": VISITOR_A },
       body: JSON.stringify({ ...fullSettings, processingWeight: 1.5 }),
+    });
+
+    expect(res.status).toBe(400);
+    expect(store).toHaveLength(0);
+  });
+
+  it("returns 400 when the X-Visitor-Id header is missing", async () => {
+    const res = await app.request("/api/health-score/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(fullSettings),
     });
 
     expect(res.status).toBe(400);
@@ -805,41 +861,63 @@ describe("computeHealthScore — renormalization + composite", () => {
 
 describe("GET /api/health-score — route", () => {
   const app = new Hono();
+  app.use("/api/health-score/*", visitorIdMiddleware);
   app.route("/api/health-score", healthScoreRoute);
 
   it("returns 400 for an invalid date", async () => {
-    const res = await app.request("/api/health-score?date=not-a-date");
+    const res = await app.request("/api/health-score?date=not-a-date", {
+      headers: { "X-Visitor-Id": VISITOR_A },
+    });
     expect(res.status).toBe(400);
   });
 
   it("returns 200 with { status: 'hidden' } when the master toggle is off", async () => {
     await upsertHealthScoreSettings({ ...fullSettings, enabled: false });
 
-    const res = await app.request("/api/health-score?date=2026-07-06");
+    const res = await app.request("/api/health-score?date=2026-07-06", {
+      headers: { "X-Visitor-Id": VISITOR_A },
+    });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ status: "hidden" });
   });
 
   it("returns 400 when the date query param is missing entirely", async () => {
-    const res = await app.request("/api/health-score");
+    const res = await app.request("/api/health-score", {
+      headers: { "X-Visitor-Id": VISITOR_A },
+    });
     expect(res.status).toBe(400);
   });
 
   it("returns 400 for a date that rolls over (Feb 30 doesn't exist)", async () => {
-    const res = await app.request("/api/health-score?date=2024-02-30");
+    const res = await app.request("/api/health-score?date=2024-02-30", {
+      headers: { "X-Visitor-Id": VISITOR_A },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when the X-Visitor-Id header is missing", async () => {
+    const res = await app.request("/api/health-score?date=2026-07-06");
     expect(res.status).toBe(400);
   });
 });
 
 describe("GET /api/health-score/settings — route", () => {
   const app = new Hono();
+  app.use("/api/health-score/*", visitorIdMiddleware);
   app.route("/api/health-score", healthScoreRoute);
 
   it("returns 200 with default settings when none exist yet", async () => {
-    const res = await app.request("/api/health-score/settings");
+    const res = await app.request("/api/health-score/settings", {
+      headers: { "X-Visitor-Id": VISITOR_A },
+    });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(fullSettings);
+  });
+
+  it("returns 400 when the X-Visitor-Id header is missing", async () => {
+    const res = await app.request("/api/health-score/settings");
+    expect(res.status).toBe(400);
   });
 });
 
@@ -847,6 +925,7 @@ describe("GET /api/health-score/settings — route", () => {
 
 describe("PUT /api/health-score/settings — additional adversarial validation", () => {
   const app = new Hono();
+  app.use("/api/health-score/*", visitorIdMiddleware);
   app.route("/api/health-score", healthScoreRoute);
 
   it("returns 400 when a required field is missing", async () => {
@@ -855,7 +934,7 @@ describe("PUT /api/health-score/settings — additional adversarial validation",
 
     const res = await app.request("/api/health-score/settings", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Visitor-Id": VISITOR_A },
       body: JSON.stringify(bodyWithoutVarietyWeight),
     });
 
@@ -866,7 +945,7 @@ describe("PUT /api/health-score/settings — additional adversarial validation",
   it("returns 400 when a field has the wrong type", async () => {
     const res = await app.request("/api/health-score/settings", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Visitor-Id": VISITOR_A },
       body: JSON.stringify({ ...fullSettings, enabled: "yes" }),
     });
 
@@ -877,7 +956,7 @@ describe("PUT /api/health-score/settings — additional adversarial validation",
   it("returns 400 when a weight is negative", async () => {
     const res = await app.request("/api/health-score/settings", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Visitor-Id": VISITOR_A },
       body: JSON.stringify({ ...fullSettings, macroFitWeight: -0.1 }),
     });
 
@@ -1131,5 +1210,59 @@ describe("getHealthScoreSettings — concurrent default-creation race", () => {
     expect(first).toEqual(fullSettings);
     expect(second).toEqual(fullSettings);
     expect(store.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("visitor isolation", () => {
+  it("getHealthScoreSettings creates and returns independent default rows per visitor", async () => {
+    const settingsA = await realGetHealthScoreSettings(VISITOR_A);
+    const settingsB = await realGetHealthScoreSettings(VISITOR_B);
+
+    expect(settingsA).toEqual(fullSettings);
+    expect(settingsB).toEqual(fullSettings);
+    expect(store).toHaveLength(2);
+    expect(store.find((r) => r.visitorId === VISITOR_A)).not.toBe(
+      store.find((r) => r.visitorId === VISITOR_B),
+    );
+  });
+
+  it("upsertHealthScoreSettings for visitor B does not affect visitor A's settings", async () => {
+    await realUpsertHealthScoreSettings(fullSettings, VISITOR_A);
+    await realUpsertHealthScoreSettings({ ...fullSettings, enabled: false }, VISITOR_B);
+
+    const settingsA = await realGetHealthScoreSettings(VISITOR_A);
+    const settingsB = await realGetHealthScoreSettings(VISITOR_B);
+
+    expect(settingsA.enabled).toBe(true);
+    expect(settingsB.enabled).toBe(false);
+    expect(store).toHaveLength(2);
+  });
+
+  it("computeHealthScore for visitor B is unaffected by visitor A's logs/goals/settings", async () => {
+    await realUpsertHealthScoreSettings(
+      { ...fullSettings, processingEnabled: false, sugarSodiumEnabled: false, varietyEnabled: false },
+      VISITOR_A,
+    );
+    // Visitor B keeps the default (all-enabled) settings — never upserted.
+
+    getLogsByDate.mockImplementation(async (_date, visitorId) => {
+      if (visitorId === VISITOR_A) {
+        return {
+          entries: [makeEntry({ calories: 1800, protein: 90, carbs: 200, fat: 60 })],
+          totals: { calories: 1800, protein: 90, carbs: 200, fat: 60 },
+        };
+      }
+      // Visitor B has never logged anything.
+      return emptyLogsForDate();
+    });
+    getGoals.mockImplementation(async (visitorId) =>
+      visitorId === VISITOR_A ? { calories: 2000, protein: 100, carbs: 200, fat: 50 } : null,
+    );
+
+    const resultA = await realComputeHealthScore("2026-07-06", VISITOR_A);
+    const resultB = await realComputeHealthScore("2026-07-06", VISITOR_B);
+
+    expect(resultA.status).toBe("ok");
+    expect(resultB).toEqual({ status: "insufficient_data" });
   });
 });

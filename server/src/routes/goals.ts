@@ -6,12 +6,14 @@ import { getGoals, upsertGoals } from "../services/goals.js";
 export const goalsRoute = new Hono();
 
 goalsRoute.get("/", async (c) => {
-  const goals = await getGoals();
+  const visitorId = c.get("visitorId");
+  const goals = await getGoals(visitorId);
   return c.json(goals, 200);
 });
 
 goalsRoute.put("/", zValidator("json", goalsSchema), async (c) => {
   const body = c.req.valid("json");
-  const goals = await upsertGoals(body);
+  const visitorId = c.get("visitorId");
+  const goals = await upsertGoals(body, visitorId);
   return c.json(goals, 200);
 });

@@ -12,8 +12,9 @@ export const logsRoute = new Hono();
 
 logsRoute.post("/", zValidator("json", createLogRequestSchema), async (c) => {
   const body = c.req.valid("json");
+  const visitorId = c.get("visitorId");
 
-  const entry = await createLog(body);
+  const entry = await createLog(body, visitorId);
   if (!entry) {
     return c.json({ error: "Food not found" }, 404);
   }
@@ -22,7 +23,8 @@ logsRoute.post("/", zValidator("json", createLogRequestSchema), async (c) => {
 
 logsRoute.get("/", zValidator("query", getLogsQuerySchema), async (c) => {
   const { date } = c.req.valid("query");
-  const result = await getLogsByDate(date);
+  const visitorId = c.get("visitorId");
+  const result = await getLogsByDate(date, visitorId);
   return c.json(result, 200);
 });
 
@@ -33,8 +35,9 @@ logsRoute.patch(
   async (c) => {
     const { id } = c.req.valid("param");
     const patch = c.req.valid("json");
+    const visitorId = c.get("visitorId");
 
-    const entry = await updateLog(id, patch);
+    const entry = await updateLog(id, patch, visitorId);
     if (!entry) {
       return c.json({ error: "Log entry not found" }, 404);
     }
@@ -44,7 +47,8 @@ logsRoute.patch(
 
 logsRoute.delete("/:id", zValidator("param", logIdParamSchema), async (c) => {
   const { id } = c.req.valid("param");
-  const deleted = await deleteLog(id);
+  const visitorId = c.get("visitorId");
+  const deleted = await deleteLog(id, visitorId);
   if (!deleted) {
     return c.json({ error: "Log entry not found" }, 404);
   }

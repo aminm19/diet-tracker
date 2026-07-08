@@ -1,7 +1,7 @@
 // CRUD for logged food entries. Nutrition values are snapshotted from the
 // resolved food + amount/unit at write time (create, or an amount/unit
 // change on update) so later corrections to `foods` never rewrite history.
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Food, LogEntry, LogTotals, LogUnit } from "shared";
 import { computeLogTotals, foodLogs } from "shared";
 import { db } from "../db/client.js";
@@ -82,7 +82,10 @@ export interface CreateLogInput {
 // Returns `null` if `foodId` doesn't resolve to a cached food (route maps to
 // 404). Throws `InvalidServingSizeError` for an invalid serving-unit request
 // (route maps to 400).
-export async function createLog(input: CreateLogInput): Promise<LogEntry | null> {
+export async function createLog(
+  input: CreateLogInput,
+  visitorId: string,
+): Promise<LogEntry | null> {
   const food = await getFoodById(input.foodId);
   if (!food) return null;
 
@@ -91,6 +94,7 @@ export async function createLog(input: CreateLogInput): Promise<LogEntry | null>
   const [row] = await db
     .insert(foodLogs)
     .values({
+      visitorId,
       loggedDate: input.loggedDate,
       foodId: input.foodId,
       amount: input.amount.toString(),
@@ -116,8 +120,11 @@ export interface LogsForDate {
   totals: LogTotals;
 }
 
-export async function getLogsByDate(date: string): Promise<LogsForDate> {
-  const rows = await db.select().from(foodLogs).where(eq(foodLogs.loggedDate, date));
+export async function getLogsByDate(date: string, visitorId: string): Promise<LogsForDate> {
+  const rows = await db
+    .select()
+    .from(foodLogs)
+    .where(and(eq(foodLogs.loggedDate, date), eq(foodLogs.visitorId, visitorId)));
   const entries = rows.map(rowToLogEntry);
   const totals = computeLogTotals(entries);
 
@@ -130,11 +137,20 @@ export interface UpdateLogInput {
   loggedDate?: string;
 }
 
-// Returns `null` if the log id doesn't exist (route maps to 404). Throws
-// `InvalidServingSizeError` if the recomputed snapshot hits an invalid
-// serving-unit request (route maps to 400).
-export async function updateLog(id: number, patch: UpdateLogInput): Promise<LogEntry | null> {
-  const [existing] = await db.select().from(foodLogs).where(eq(foodLogs.id, id));
+// Returns `null` if the log id doesn't exist *for this visitor* (route maps
+// to 404) — this also blocks one visitor from updating another visitor's log
+// by guessing/incrementing ids. Throws `InvalidServingSizeError` if the
+// recomputed snapshot hits an invalid serving-unit request (route maps to
+// 400).
+export async function updateLog(
+  id: number,
+  patch: UpdateLogInput,
+  visitorId: string,
+): Promise<LogEntry | null> {
+  const [existing] = await db
+    .select()
+    .from(foodLogs)
+    .where(and(eq(foodLogs.id, id), eq(foodLogs.visitorId, visitorId)));
   if (!existing) return null;
 
   const needsRecompute = patch.amount !== undefined || patch.unit !== undefined;
@@ -171,7 +187,7 @@ export async function updateLog(id: number, patch: UpdateLogInput): Promise<LogE
         : {}),
       updatedAt: new Date(),
     })
-    .where(eq(foodLogs.id, id))
+    .where(and(eq(foodLogs.id, id), eq(foodLogs.visitorId, visitorId)))
     .returning();
 
   if (!row) {
@@ -181,8 +197,13 @@ export async function updateLog(id: number, patch: UpdateLogInput): Promise<LogE
   return rowToLogEntry(row);
 }
 
-// Returns `false` if the log id didn't exist (route maps to 404).
-export async function deleteLog(id: number): Promise<boolean> {
-  const [row] = await db.delete(foodLogs).where(eq(foodLogs.id, id)).returning({ id: foodLogs.id });
+// Returns `false` if the log id didn't exist *for this visitor* (route maps
+// to 404) — this also blocks one visitor from deleting another visitor's log
+// by guessing/incrementing ids.
+export async function deleteLog(id: number, visitorId: string): Promise<boolean> {
+  const [row] = await db
+    .delete(foodLogs)
+    .where(and(eq(foodLogs.id, id), eq(foodLogs.visitorId, visitorId)))
+    .returning({ id: foodLogs.id });
   return row !== undefined;
 }

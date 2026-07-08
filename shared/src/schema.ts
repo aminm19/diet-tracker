@@ -47,6 +47,10 @@ export const foods = pgTable(
 // snapshotted at log time so later corrections to `foods` never rewrite history.
 export const foodLogs = pgTable("food_logs", {
   id: serial("id").primaryKey(),
+  // Anonymous per-browser visitor id (from the `X-Visitor-Id` header) — scopes
+  // this demo app's data per-visitor with no real auth. No unique constraint:
+  // many log rows belong to the same visitor.
+  visitorId: text("visitor_id").notNull(),
   loggedDate: date("logged_date").notNull(),
   foodId: integer("food_id")
     .notNull()
@@ -63,10 +67,12 @@ export const foodLogs = pgTable("food_logs", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
-// Daily macro/calorie targets. Single-user app — effectively a singleton
-// row (id=1) enforced at the application layer, not the schema.
+// Daily macro/calorie targets. One row per anonymous visitor (previously a
+// true singleton) — the unique constraint on `visitorId` lets `upsertGoals`
+// target the row cleanly.
 export const goals = pgTable("goals", {
   id: serial("id").primaryKey(),
+  visitorId: text("visitor_id").notNull().unique(),
   calories: numeric("calories").notNull(),
   protein: numeric("protein").notNull(),
   carbs: numeric("carbs").notNull(),
@@ -75,9 +81,12 @@ export const goals = pgTable("goals", {
 });
 
 // Master + per-factor toggles and weights for the health score composite.
-// Also a singleton row in practice.
+// One row per anonymous visitor (previously a singleton in practice) — the
+// unique constraint on `visitorId` lets `upsertHealthScoreSettings` target
+// the row cleanly.
 export const healthScoreSettings = pgTable("health_score_settings", {
   id: serial("id").primaryKey(),
+  visitorId: text("visitor_id").notNull().unique(),
   enabled: boolean("enabled").notNull().default(true),
   processingEnabled: boolean("processing_enabled").notNull().default(true),
   processingWeight: numeric("processing_weight").notNull().default("0.25"),

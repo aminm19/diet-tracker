@@ -4,6 +4,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { SHARED_SCAFFOLD_MARKER } from "shared";
 import { onError } from "./errorHandler.js";
+import { visitorIdMiddleware } from "./middleware/visitorId.js";
 import { foodsRoute } from "./routes/foods.js";
 import { goalsRoute } from "./routes/goals.js";
 import { healthScoreRoute } from "./routes/healthScore.js";
@@ -15,6 +16,7 @@ app.use(
   "*",
   cors({
     origin: ["http://localhost:5173", "https://diet-tracker-client.vercel.app"],
+    allowHeaders: ["Content-Type", "X-Visitor-Id"],
   }),
 );
 
@@ -23,8 +25,11 @@ app.get("/health", (c) => {
 });
 
 app.route("/api/foods", foodsRoute);
+app.use("/api/goals/*", visitorIdMiddleware);
 app.route("/api/goals", goalsRoute);
+app.use("/api/health-score/*", visitorIdMiddleware);
 app.route("/api/health-score", healthScoreRoute);
+app.use("/api/logs/*", visitorIdMiddleware);
 app.route("/api/logs", logsRoute);
 
 app.onError(onError);

@@ -1,7 +1,7 @@
-// Singleton daily calorie/macro goals — the `goals` table has no unique
-// constraint to `ON CONFLICT` against (a plain `serial` PK), so existence is
-// checked in JS and we insert or update accordingly rather than upserting at
-// the DB level.
+// Daily calorie/macro goals, one row per anonymous visitor. `goals.visitorId`
+// has a unique constraint, but upserting is still done as a select-then-
+// insert-or-update in JS (rather than a DB-level `ON CONFLICT`) to keep the
+// same pattern as the rest of the codebase.
 import { eq } from "drizzle-orm";
 import type { Goals } from "shared";
 import { goals } from "shared";
@@ -20,17 +20,19 @@ function rowToGoals(row: typeof goals.$inferSelect): Goals {
   };
 }
 
-// Returns `null` if no goals row exists yet (goals unset).
-export async function getGoals(): Promise<Goals | null> {
-  const [row] = await db.select().from(goals);
+// Returns `null` if no goals row exists yet for this visitor (goals unset).
+export async function getGoals(visitorId: string): Promise<Goals | null> {
+  const [row] = await db.select().from(goals).where(eq(goals.visitorId, visitorId));
   return row ? rowToGoals(row) : null;
 }
 
-// Inserts a new row if none exists yet, otherwise updates the existing one.
-export async function upsertGoals(input: Goals): Promise<Goals> {
-  const [existing] = await db.select().from(goals);
+// Inserts a new row if none exists yet for this visitor, otherwise updates
+// the existing one.
+export async function upsertGoals(input: Goals, visitorId: string): Promise<Goals> {
+  const [existing] = await db.select().from(goals).where(eq(goals.visitorId, visitorId));
 
   const values = {
+    visitorId,
     calories: numericToString(input.calories)!,
     protein: numericToString(input.protein)!,
     carbs: numericToString(input.carbs)!,

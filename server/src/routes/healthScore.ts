@@ -6,18 +6,21 @@ import { computeHealthScore, getHealthScoreSettings, upsertHealthScoreSettings }
 export const healthScoreRoute = new Hono();
 
 healthScoreRoute.get("/settings", async (c) => {
-  const settings = await getHealthScoreSettings();
+  const visitorId = c.get("visitorId");
+  const settings = await getHealthScoreSettings(visitorId);
   return c.json(settings, 200);
 });
 
 healthScoreRoute.put("/settings", zValidator("json", healthScoreSettingsSchema), async (c) => {
   const body = c.req.valid("json");
-  const settings = await upsertHealthScoreSettings(body);
+  const visitorId = c.get("visitorId");
+  const settings = await upsertHealthScoreSettings(body, visitorId);
   return c.json(settings, 200);
 });
 
 healthScoreRoute.get("/", zValidator("query", getHealthScoreQuerySchema), async (c) => {
   const { date } = c.req.valid("query");
-  const result = await computeHealthScore(date);
+  const visitorId = c.get("visitorId");
+  const result = await computeHealthScore(date, visitorId);
   return c.json(result, 200);
 });
