@@ -262,56 +262,62 @@ export function HealthScoreBadge({ date, refreshKey, totals }: HealthScoreBadgeP
       </button>
 
       {popoverOpen && (
-        <Card
-          id={popoverId}
-          role="group"
-          aria-label="Health score breakdown"
-          radius="sm"
-          shadow="modal"
-          className="absolute left-0 top-full z-10 mt-2 w-80 max-w-[calc(100vw-2.5rem)]"
-          innerClassName="flex flex-col divide-y divide-black/5 p-4"
-        >
-          {FACTORS.map((factor) => {
-            const factorResult = result.factors[factor.key];
-            return (
-              <div key={factor.key} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
-                <span className="min-w-0 text-xs font-medium text-ink">{factor.label}</span>
-                {factorResult === null ? (
-                  <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-muted">
-                    <span aria-hidden="true">—</span>
-                    not counted today
-                  </span>
-                ) : factorResult.score >= 50 ? (
-                  <span className="flex items-center gap-1.5">
-                    <span className="sr-only">Good</span>
-                    <span
-                      aria-hidden="true"
-                      className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--color-good)]/10"
-                    >
-                      <Plus size={12} weight="bold" className="text-[var(--color-good)]" />
+        // The `pt-2` gap lives on this wrapper (padding, part of its own
+        // hit-test box) rather than as a `mt-*` margin on the `Card` below —
+        // margin would leave that visual gap uncovered by any element, so a
+        // mouse moving slowly from the button toward the popover could
+        // linger there and trigger a leave before ever reaching the popover.
+        <div className="absolute left-0 top-full z-10 w-80 max-w-[calc(100vw-2.5rem)] pt-2">
+          <Card
+            id={popoverId}
+            role="group"
+            aria-label="Health score breakdown"
+            radius="sm"
+            shadow="modal"
+            innerClassName="flex flex-col divide-y divide-black/5 p-4"
+          >
+            {FACTORS.map((factor) => {
+              const factorResult = result.factors[factor.key];
+              return (
+                <div key={factor.key} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                  <span className="min-w-0 text-xs font-medium text-ink">{factor.label}</span>
+                  {factorResult === null ? (
+                    <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-muted">
+                      <span aria-hidden="true">—</span>
+                      not counted today
                     </span>
-                  </span>
-                ) : (
-                  <span className="flex items-center gap-1.5">
-                    <span className="sr-only">Needs work</span>
-                    <span
-                      aria-hidden="true"
-                      className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--color-danger)]/10"
-                    >
-                      <Minus size={12} weight="bold" className="text-[var(--color-danger)]" />
+                  ) : factorResult.score >= 50 ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="sr-only">Good</span>
+                      <span
+                        aria-hidden="true"
+                        className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--color-good)]/10"
+                      >
+                        <Plus size={12} weight="bold" className="text-[var(--color-good)]" />
+                      </span>
                     </span>
-                  </span>
-                )}
-              </div>
-            );
-          })}
+                  ) : (
+                    <span className="flex items-center gap-1.5">
+                      <span className="sr-only">Needs work</span>
+                      <span
+                        aria-hidden="true"
+                        className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--color-danger)]/10"
+                      >
+                        <Minus size={12} weight="bold" className="text-[var(--color-danger)]" />
+                      </span>
+                    </span>
+                  )}
+                </div>
+              );
+            })}
 
-          {result.message && (
-            <p className="mt-2 border-t border-black/5 pt-3 font-display text-sm font-medium text-ink">
-              {result.message}
-            </p>
-          )}
-        </Card>
+            {result.message && (
+              <p className="mt-2 border-t border-black/5 pt-3 font-display text-sm font-medium text-ink">
+                {result.message}
+              </p>
+            )}
+          </Card>
+        </div>
       )}
     </div>
   );
