@@ -9,7 +9,14 @@
 // indistinguishable to callers — the health score should be on by default
 // until the user explicitly turns it off.
 import { eq } from "drizzle-orm";
-import type { HealthScoreFactorKey, HealthScoreResult, HealthScoreSettings, LogEntry } from "shared";
+import type {
+  Goals,
+  HealthScoreFactorKey,
+  HealthScoreResult,
+  HealthScoreSettings,
+  LogEntry,
+  LogTotals,
+} from "shared";
 import { computeLogTotals, healthScoreSettings } from "shared";
 import { db } from "../db/client.js";
 import { numericToString, stringToNumber } from "../db/numeric.js";
@@ -111,13 +118,17 @@ async function computeProcessingScore(entries: LogEntry[]): Promise<number | nul
 // day. Averages the relative error (|dailyTotal - goal| / goal) across the
 // four macros, skipping any macro whose goal is 0 (avoids divide-by-zero).
 // If every goal happens to be 0, there's nothing to average — also excluded.
-async function computeMacroFitScore(entries: LogEntry[]): Promise<number | null> {
+// `goals`/`totals` are passed in (rather than fetched here) so
+// `computeHealthScore` can share the single `getGoals()` call with the
+// plain-language diet message.
+function computeMacroFitScore(
+  entries: LogEntry[],
+  totals: LogTotals,
+  goals: Goals | null,
+): number | null {
   if (entries.length === 0) return null;
-
-  const goals = await getGoals();
   if (!goals) return null;
 
-  const totals = computeLogTotals(entries);
   const macros = ["calories", "protein", "carbs", "fat"] as const;
 
   const relativeErrors = macros
@@ -128,6 +139,32 @@ async function computeMacroFitScore(entries: LogEntry[]): Promise<number | null>
 
   const avgRelativeError = relativeErrors.reduce((sum, e) => sum + e, 0) / relativeErrors.length;
   return clamp(100 - avgRelativeError * 100, 0, 100);
+}
+
+// `hit` = within 15% relative error of goal, same threshold style as
+// `computeMacroFitScore` but collapsed to a boolean. Only computable under
+// the same conditions as macro-fit (goals set, at least one entry that day)
+// plus both the calorie and protein goals being non-zero — otherwise there's
+// nothing meaningful to compare, so `null` (same spirit as macro-fit's
+// zero-goal handling). Deliberately independent of
+// `settings.macroFitEnabled`: a user can disable the macro-fit *score* while
+// still wanting this plain-language message.
+function hit(actual: number, goal: number): boolean {
+  return Math.abs(actual - goal) / goal <= 0.15;
+}
+
+function computeDietMessage(entries: LogEntry[], totals: LogTotals, goals: Goals | null): string | null {
+  if (!goals) return null;
+  if (entries.length === 0) return null;
+  if (goals.calories === 0 || goals.protein === 0) return null;
+
+  const caloriesHit = hit(totals.calories, goals.calories);
+  const proteinHit = hit(totals.protein, goals.protein);
+
+  if (!caloriesHit && !proteinHit) return "Get in some more protein today!";
+  if (caloriesHit && !proteinHit) return "Your diet was a little light on protein today.";
+  if (caloriesHit && proteinHit) return "Solid day — you hit both your calorie and protein goals!";
+  return "Good protein today — keep an eye on your calorie goal.";
 }
 
 const SUGAR_LIMIT_G = 50;
@@ -223,6 +260,10 @@ interface FactorInput {
 // enabled-and-computable ones into a weighted average, renormalizing their
 // weights to sum to 1. Returns `{ status: "insufficient_data" }` if zero
 // factors end up enabled and computable.
+//
+// `goals` is fetched once here (rather than inside `computeMacroFitScore`)
+// so it can be shared with `computeDietMessage` without a second DB
+// round-trip; both consume the same `entries`/`totals` fetched up front too.
 export async function computeHealthScore(date: string): Promise<HealthScoreResult> {
   const settings = await getHealthScoreSettings();
   if (!settings.enabled) {
@@ -230,15 +271,21 @@ export async function computeHealthScore(date: string): Promise<HealthScoreResul
   }
 
   const { entries } = await getLogsByDate(date);
+  const goals = await getGoals();
+  const totals = computeLogTotals(entries);
 
   const [processingScore, macroFitScore, sugarSodiumScore, varietyScore] = await Promise.all([
     settings.processingEnabled ? computeProcessingScore(entries) : Promise.resolve(null),
-    settings.macroFitEnabled ? computeMacroFitScore(entries) : Promise.resolve(null),
+    settings.macroFitEnabled
+      ? Promise.resolve(computeMacroFitScore(entries, totals, goals))
+      : Promise.resolve(null),
     settings.sugarSodiumEnabled
       ? Promise.resolve(computeSugarSodiumScore(entries))
       : Promise.resolve(null),
     settings.varietyEnabled ? computeVarietyScore(date) : Promise.resolve(null),
   ]);
+
+  const message = computeDietMessage(entries, totals, goals);
 
   const factorInputs: FactorInput[] = [
     { key: "processing", score: processingScore, weight: settings.processingWeight },
@@ -273,5 +320,5 @@ export async function computeHealthScore(date: string): Promise<HealthScoreResul
     compositeScore += f.score * renormalizedWeight;
   }
 
-  return { status: "ok", score: compositeScore, factors };
+  return { status: "ok", score: compositeScore, factors, message };
 }

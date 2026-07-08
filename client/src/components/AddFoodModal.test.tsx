@@ -299,6 +299,149 @@ describe("AddFoodModal — select & submit flow", () => {
   });
 });
 
+describe("AddFoodModal — live nutrition summary", () => {
+  it("shows the per-100g reference values for the default amount+unit on selection", async () => {
+    mockSearchFoods.mockResolvedValue([makeFood({ servingSize: null })]);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<AddFoodModal date="2026-07-06" onClose={vi.fn()} onAdded={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Search for a food…"), { target: { value: "ban" } });
+    await act(300);
+    await waitFor(() => expect(screen.getByText("Banana")).toBeInTheDocument());
+    await user.click(screen.getByText("Banana"));
+
+    expect(screen.getByText("89 kcal")).toBeInTheDocument();
+    expect(screen.getByText("1g protein")).toBeInTheDocument();
+    expect(screen.getByText("23g carbs")).toBeInTheDocument();
+    expect(screen.getByText("0g fat")).toBeInTheDocument();
+  });
+
+  it("recalculates the live summary as the amount changes", async () => {
+    mockSearchFoods.mockResolvedValue([makeFood({ servingSize: null })]);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<AddFoodModal date="2026-07-06" onClose={vi.fn()} onAdded={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Search for a food…"), { target: { value: "ban" } });
+    await act(300);
+    await waitFor(() => expect(screen.getByText("Banana")).toBeInTheDocument());
+    await user.click(screen.getByText("Banana"));
+
+    fireEvent.change(screen.getByDisplayValue("100"), { target: { value: "200" } });
+
+    expect(screen.getByText("178 kcal")).toBeInTheDocument();
+    expect(screen.getByText("2g protein")).toBeInTheDocument();
+    expect(screen.getByText("46g carbs")).toBeInTheDocument();
+    expect(screen.getByText("1g fat")).toBeInTheDocument();
+  });
+
+  it("recalculates the live summary as the unit changes (g -> oz -> serving)", async () => {
+    mockSearchFoods.mockResolvedValue([makeFood({ servingSize: 118, servingUnit: "cup" })]);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<AddFoodModal date="2026-07-06" onClose={vi.fn()} onAdded={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Search for a food…"), { target: { value: "ban" } });
+    await act(300);
+    await waitFor(() => expect(screen.getByText("Banana")).toBeInTheDocument());
+    await user.click(screen.getByText("Banana"));
+
+    // Defaults to amount=1, unit=serving: 1 serving = 118g.
+    expect(screen.getByText("105 kcal")).toBeInTheDocument();
+    expect(screen.getByText("1g protein")).toBeInTheDocument();
+    expect(screen.getByText("27g carbs")).toBeInTheDocument();
+    expect(screen.getByText("0g fat")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByDisplayValue("1"), { target: { value: "100" } });
+
+    await user.click(screen.getByRole("button", { name: "g" }));
+    expect(screen.getByText("89 kcal")).toBeInTheDocument();
+    expect(screen.getByText("23g carbs")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "oz" }));
+    expect(screen.getByText("2523 kcal")).toBeInTheDocument();
+    expect(screen.getByText("31g protein")).toBeInTheDocument();
+    expect(screen.getByText("652g carbs")).toBeInTheDocument();
+    expect(screen.getByText("9g fat")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "serving" }));
+    expect(screen.getByText("10502 kcal")).toBeInTheDocument();
+    expect(screen.getByText("130g protein")).toBeInTheDocument();
+    expect(screen.getByText("2714g carbs")).toBeInTheDocument();
+    expect(screen.getByText("35g fat")).toBeInTheDocument();
+  });
+
+  it("falls back to the per-100g reference display when the amount is invalid", async () => {
+    mockSearchFoods.mockResolvedValue([makeFood({ servingSize: null })]);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<AddFoodModal date="2026-07-06" onClose={vi.fn()} onAdded={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Search for a food…"), { target: { value: "ban" } });
+    await act(300);
+    await waitFor(() => expect(screen.getByText("Banana")).toBeInTheDocument());
+    await user.click(screen.getByText("Banana"));
+
+    fireEvent.change(screen.getByDisplayValue("100"), { target: { value: "" } });
+
+    expect(screen.getByText("89 kcal / 100g")).toBeInTheDocument();
+    expect(screen.getByText("1g protein")).toBeInTheDocument();
+    expect(screen.getByText("23g carbs")).toBeInTheDocument();
+    expect(screen.getByText("0g fat")).toBeInTheDocument();
+  });
+
+  it("falls back to the per-100g reference display for a non-numeric amount", async () => {
+    mockSearchFoods.mockResolvedValue([makeFood({ servingSize: null })]);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<AddFoodModal date="2026-07-06" onClose={vi.fn()} onAdded={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Search for a food…"), { target: { value: "ban" } });
+    await act(300);
+    await waitFor(() => expect(screen.getByText("Banana")).toBeInTheDocument());
+    await user.click(screen.getByText("Banana"));
+
+    fireEvent.change(screen.getByDisplayValue("100"), { target: { value: "abc" } });
+
+    expect(screen.getByText("89 kcal / 100g")).toBeInTheDocument();
+  });
+
+  it("shows the 'serving = <servingUnit>' hint when a serving unit is on record", async () => {
+    mockSearchFoods.mockResolvedValue([makeFood({ servingSize: 118, servingUnit: "cup" })]);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<AddFoodModal date="2026-07-06" onClose={vi.fn()} onAdded={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Search for a food…"), { target: { value: "ban" } });
+    await act(300);
+    await waitFor(() => expect(screen.getByText("Banana")).toBeInTheDocument());
+    await user.click(screen.getByText("Banana"));
+
+    expect(screen.getByText("serving = cup")).toBeInTheDocument();
+  });
+
+  it("does not show the serving-unit hint when servingUnit is null", async () => {
+    mockSearchFoods.mockResolvedValue([makeFood({ servingSize: 118, servingUnit: null })]);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<AddFoodModal date="2026-07-06" onClose={vi.fn()} onAdded={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Search for a food…"), { target: { value: "ban" } });
+    await act(300);
+    await waitFor(() => expect(screen.getByText("Banana")).toBeInTheDocument());
+    await user.click(screen.getByText("Banana"));
+
+    expect(screen.queryByText(/^serving =/)).not.toBeInTheDocument();
+  });
+
+  it("does not show the serving-unit hint when there is no serving size on record", async () => {
+    mockSearchFoods.mockResolvedValue([makeFood({ servingSize: null, servingUnit: null })]);
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    render(<AddFoodModal date="2026-07-06" onClose={vi.fn()} onAdded={vi.fn()} />);
+
+    fireEvent.change(screen.getByPlaceholderText("Search for a food…"), { target: { value: "ban" } });
+    await act(300);
+    await waitFor(() => expect(screen.getByText("Banana")).toBeInTheDocument());
+    await user.click(screen.getByText("Banana"));
+
+    expect(screen.queryByText(/^serving =/)).not.toBeInTheDocument();
+  });
+});
+
 describe("AddFoodModal — keyboard, focus, and lifecycle", () => {
   it("calls onClose when Escape is pressed", () => {
     const onClose = vi.fn();

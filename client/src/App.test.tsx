@@ -157,19 +157,27 @@ describe("App — health score wiring", () => {
       status: "ok",
       score: 82,
       factors: { processing: null, macroFit: null, sugarSodium: null, variety: null },
+      message: null,
     });
     render(<App />);
 
-    await waitFor(() => expect(mockGetHealthScore).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("status")).toHaveTextContent("82");
+    // `HealthScoreBadge`'s "ok" branch is now a `<button>` (opens a
+    // breakdown popover) rather than a plain `role="status"` div. Matched by
+    // a name pattern with a digit so it can't match the always-present
+    // "Health score settings" gear button.
+    expect(await screen.findByRole("button", { name: /Health score \d/ })).toHaveTextContent("82");
   });
 
   it("renders nothing extra for the badge when status is hidden, but still shows the settings gear", async () => {
     mockGetHealthScore.mockResolvedValue({ status: "hidden" });
     render(<App />);
 
-    await waitFor(() => expect(mockGetHealthScore).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    // Two calls, not one: the mount-time fetch (with the daily log's initial
+    // empty totals) plus a second fetch once `useDailyLog`'s real totals
+    // resolve and replace that initial object reference — `HealthScoreBadge`
+    // now refetches on every `totals` reference change, per the fix above.
+    await waitFor(() => expect(mockGetHealthScore).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("button", { name: /Health score \d/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Health score settings" })).toBeInTheDocument();
   });
 
@@ -200,12 +208,16 @@ describe("App — health score wiring", () => {
       status: "ok",
       score: 40,
       factors: { processing: null, macroFit: null, sugarSodium: null, variety: null },
+      message: null,
     });
     mockUpdateHealthScoreSettings.mockResolvedValue({ ...existingHealthScoreSettings, enabled: false });
     const user = userEvent.setup();
     render(<App />);
 
-    await waitFor(() => expect(mockGetHealthScore).toHaveBeenCalledTimes(1));
+    // Settles at 2 (not 1): mount-time fetch, then a second once the daily
+    // log's real totals replace its initial empty-totals reference — see the
+    // comment in the test above.
+    await waitFor(() => expect(mockGetHealthScore).toHaveBeenCalledTimes(2));
 
     await user.click(screen.getByRole("button", { name: "Health score settings" }));
     await screen.findAllByDisplayValue("25");
@@ -216,6 +228,6 @@ describe("App — health score wiring", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
     // The badge must refetch even though `date` itself never changed.
-    await waitFor(() => expect(mockGetHealthScore).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(mockGetHealthScore).toHaveBeenCalledTimes(3));
   });
 });

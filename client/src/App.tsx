@@ -57,7 +57,7 @@ function App() {
 
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div className="flex items-center gap-1.5">
-            <HealthScoreBadge date={date} refreshKey={healthScoreRefreshKey} />
+            <HealthScoreBadge date={date} refreshKey={healthScoreRefreshKey} totals={totals} />
             <IconButton
               variant="ghost"
               onClick={() => setHealthScoreSettingsOpen(true)}

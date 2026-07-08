@@ -1,7 +1,9 @@
-import { Info, WarningCircle } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
-import type { HealthScoreResult } from "shared";
+import { Info, Minus, Plus, WarningCircle } from "@phosphor-icons/react";
+import { useEffect, useId, useRef, useState } from "react";
+import type { HealthScoreResult, LogTotals } from "shared";
 import { ApiError, getHealthScore } from "../lib/api";
+import { FACTORS } from "../lib/healthScoreFactors";
+import { Card } from "./ui/Card";
 
 interface HealthScoreBadgeProps {
   date: string;
@@ -10,6 +12,13 @@ interface HealthScoreBadgeProps {
   // e.g. toggling the master switch, or a factor — can change the result
   // for the date already on screen).
   refreshKey?: number;
+  // The current day's log totals. Included purely as a fetch trigger (its
+  // value isn't read below) — `useDailyLog`'s `computeLogTotals` produces a
+  // new object reference every time a log entry is added/edited/removed, so
+  // adding it to the fetch effect's dependency array is enough to refetch
+  // the score whenever the day's logged foods change, without the parent
+  // needing to bump a dedicated key for every mutation.
+  totals: LogTotals;
 }
 
 interface ScoreBand {
@@ -37,13 +46,16 @@ interface State {
 }
 
 // Compact composite health-score indicator for the daily log view. Fetches
-// `GET /api/health-score` whenever `date` (or `refreshKey`) changes. Guards
-// against out-of-order responses with a monotonically incrementing request
-// id (mirrors `useDailyLog`) rather than comparing against the requested
-// date: a same-date re-fetch (e.g. two `refreshKey` bumps in quick
+// `GET /api/health-score` whenever `date`, `refreshKey`, or `totals` changes.
+// Guards against out-of-order responses with a monotonically incrementing
+// request id (mirrors `useDailyLog`) rather than comparing against the
+// requested date: a same-date re-fetch (e.g. two `refreshKey` bumps in quick
 // succession, or a rapid date A -> B -> A navigation) still needs its older
-// in-flight response discarded even though the date matches.
-export function HealthScoreBadge({ date, refreshKey }: HealthScoreBadgeProps) {
+// in-flight response discarded even though the date matches. On
+// `status: "ok"`, the badge is a toggleable button that opens a per-factor
+// breakdown popover (click, hover, or Enter/Space; Escape or an outside
+// click dismisses it).
+export function HealthScoreBadge({ date, refreshKey, totals }: HealthScoreBadgeProps) {
   const [state, setState] = useState<State>({ status: "loading", result: null, error: null });
   const requestIdRef = useRef(0);
   // Tracks whether the previously-resolved fetch showed a visible badge, so
@@ -53,6 +65,62 @@ export function HealthScoreBadge({ date, refreshKey }: HealthScoreBadgeProps) {
   // users.
   const previousVisibleRef = useRef(false);
   const [hiddenAnnouncement, setHiddenAnnouncement] = useState<string | null>(null);
+
+  // Breakdown popover open state, tracked as *how* it got opened rather than
+  // a plain boolean: a real mouse click always lands on top of the badge,
+  // so a naive "clickOpen || hoverOpen" pair would have hover silently
+  // re-open (or block the close of) a popover the user just explicitly
+  // clicked shut, since the pointer never actually left the element. A click
+  // always forces the state fully open or fully closed regardless of
+  // whether the pointer is still hovering; hover only opens it from
+  // "closed", and only its own mouse-leave closes a hover-opened popover.
+  type PopoverSource = "closed" | "hover" | "click";
+  const [popoverSource, setPopoverSource] = useState<PopoverSource>("closed");
+  const popoverOpen = popoverSource !== "closed";
+  const containerRef = useRef<HTMLDivElement>(null);
+  const popoverId = useId();
+
+  function closePopover() {
+    setPopoverSource("closed");
+  }
+
+  function toggleFromClick() {
+    setPopoverSource((current) => (current === "click" ? "closed" : "click"));
+  }
+
+  function openFromHover() {
+    setPopoverSource((current) => (current === "closed" ? "hover" : current));
+  }
+
+  function closeFromHoverLeave() {
+    setPopoverSource((current) => (current === "hover" ? "closed" : current));
+  }
+
+  // Escape-to-close and click-outside-to-close, mirroring the spirit of
+  // `useModal`'s equivalent handling — only attached while the popover is
+  // actually open.
+  useEffect(() => {
+    if (!popoverOpen) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      closePopover();
+    }
+
+    function handlePointerDown(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        closePopover();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [popoverOpen]);
 
   useEffect(() => {
     const requestId = ++requestIdRef.current;
@@ -73,7 +141,7 @@ export function HealthScoreBadge({ date, refreshKey }: HealthScoreBadgeProps) {
         setState({ status: "error", result: null, error: message });
       }
     })();
-  }, [date, refreshKey]);
+  }, [date, refreshKey, totals]);
 
   // Announce the hidden -> visible -> hidden transition. Skipped while a
   // fetch is in flight or errored (`state.status !== "success"`) so an
@@ -146,20 +214,94 @@ export function HealthScoreBadge({ date, refreshKey }: HealthScoreBadgeProps) {
   const band = scoreBand(rounded);
 
   return (
-    <div
-      role="status"
-      aria-label={`Health score ${rounded} out of 100, ${band.label}`}
-      className="flex items-center gap-2 rounded-full bg-black/[0.04] py-1 pl-1 pr-3"
-    >
-      <span
-        aria-hidden="true"
-        className={`flex h-6 min-w-[1.75rem] items-center justify-center rounded-full px-1.5 text-xs font-bold text-white ${band.fillClass}`}
+    <div ref={containerRef} className="relative inline-flex">
+      {/* A real `<button>` (not the plain `<div>` this used to be) so the
+          breakdown popover is reachable and toggleable via mouse, touch, and
+          keyboard alike. The old `role="status"` announced content changes
+          via its accessible children's text; a bare `aria-label` on a button
+          doesn't reliably get the same treatment (live-region announcements
+          fire on text/child-list mutations inside the accessible subtree, and
+          both child spans below are `aria-hidden`). Instead, a real,
+          non-hidden `sr-only` span carries the changing text and its own
+          `aria-live="polite"` — the same pattern `DaySummary` already uses
+          for its calorie-total announcement. */}
+      <button
+        type="button"
+        aria-expanded={popoverOpen}
+        aria-controls={popoverId}
+        aria-haspopup="true"
+        aria-label={`Health score ${rounded} out of 100, ${band.label}`}
+        onClick={toggleFromClick}
+        onMouseEnter={openFromHover}
+        onMouseLeave={closeFromHoverLeave}
+        className="flex items-center gap-2 rounded-full bg-black/[0.04] py-1 pl-1 pr-3 transition-colors duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
       >
-        {rounded}
-      </span>
-      <span aria-hidden="true" className="text-xs font-semibold text-ink">
-        {band.label}
-      </span>
+        <span aria-live="polite" className="sr-only">
+          Health score {rounded} out of 100, {band.label}
+        </span>
+        <span
+          aria-hidden="true"
+          className={`flex h-6 min-w-[1.75rem] items-center justify-center rounded-full px-1.5 text-xs font-bold text-white ${band.fillClass}`}
+        >
+          {rounded}
+        </span>
+        <span aria-hidden="true" className="text-xs font-semibold text-ink">
+          {band.label}
+        </span>
+      </button>
+
+      {popoverOpen && (
+        <Card
+          id={popoverId}
+          role="group"
+          aria-label="Health score breakdown"
+          radius="sm"
+          shadow="modal"
+          className="absolute left-0 top-full z-10 mt-2 w-80 max-w-[calc(100vw-2.5rem)]"
+          innerClassName="flex flex-col divide-y divide-black/5 p-4"
+        >
+          {FACTORS.map((factor) => {
+            const factorResult = result.factors[factor.key];
+            return (
+              <div key={factor.key} className="flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0">
+                <span className="min-w-0 text-xs font-medium text-ink">{factor.label}</span>
+                {factorResult === null ? (
+                  <span className="flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px] font-medium text-muted">
+                    <span aria-hidden="true">—</span>
+                    not counted today
+                  </span>
+                ) : factorResult.score >= 50 ? (
+                  <span className="flex items-center gap-1.5">
+                    <span className="sr-only">Good</span>
+                    <span
+                      aria-hidden="true"
+                      className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--color-good)]/10"
+                    >
+                      <Plus size={12} weight="bold" className="text-[var(--color-good)]" />
+                    </span>
+                  </span>
+                ) : (
+                  <span className="flex items-center gap-1.5">
+                    <span className="sr-only">Needs work</span>
+                    <span
+                      aria-hidden="true"
+                      className="flex h-5 w-5 items-center justify-center rounded-full bg-[var(--color-danger)]/10"
+                    >
+                      <Minus size={12} weight="bold" className="text-[var(--color-danger)]" />
+                    </span>
+                  </span>
+                )}
+              </div>
+            );
+          })}
+
+          {result.message && (
+            <p className="mt-2 border-t border-black/5 pt-3 font-display text-sm font-medium text-ink">
+              {result.message}
+            </p>
+          )}
+        </Card>
+      )}
     </div>
   );
 }

@@ -429,6 +429,171 @@ describe("computeHealthScore — macro-fit factor", () => {
   });
 });
 
+describe("computeHealthScore — diet message", () => {
+  // Isolate the message logic from the four scored factors by enabling only
+  // sugarSodium (always computable once there's at least one entry,
+  // regardless of goals) so `result.status` is "ok" without macroFit's own
+  // goal-gating interfering.
+  const messageOnlySettings = {
+    ...fullSettings,
+    processingEnabled: false,
+    macroFitEnabled: false,
+    sugarSodiumEnabled: true,
+    varietyEnabled: false,
+  };
+
+  it("neither hit -> 'Get in some more protein today!'", async () => {
+    await upsertHealthScoreSettings(messageOnlySettings);
+    getLogsByDate.mockResolvedValue({
+      entries: [makeEntry({ calories: 1000, protein: 50, carbs: 100, fat: 30, sugar: 0, sodium: 0 })],
+      totals: { calories: 1000, protein: 50, carbs: 100, fat: 30 },
+    });
+    getGoals.mockResolvedValue({ calories: 2000, protein: 100, carbs: 200, fat: 50 });
+
+    const result = await computeHealthScore("2026-07-06");
+
+    // calories: |1000-2000|/2000=0.5 (not hit), protein: |50-100|/100=0.5 (not hit)
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.message).toBe("Get in some more protein today!");
+    }
+  });
+
+  it("calories hit, protein missed -> 'Your diet was a little light on protein today.'", async () => {
+    await upsertHealthScoreSettings(messageOnlySettings);
+    getLogsByDate.mockResolvedValue({
+      entries: [makeEntry({ calories: 1900, protein: 50, carbs: 100, fat: 30, sugar: 0, sodium: 0 })],
+      totals: { calories: 1900, protein: 50, carbs: 100, fat: 30 },
+    });
+    getGoals.mockResolvedValue({ calories: 2000, protein: 100, carbs: 200, fat: 50 });
+
+    const result = await computeHealthScore("2026-07-06");
+
+    // calories: |1900-2000|/2000=0.05 (hit), protein: |50-100|/100=0.5 (not hit)
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.message).toBe("Your diet was a little light on protein today.");
+    }
+  });
+
+  it("both hit -> 'Solid day — you hit both your calorie and protein goals!'", async () => {
+    await upsertHealthScoreSettings(messageOnlySettings);
+    getLogsByDate.mockResolvedValue({
+      entries: [makeEntry({ calories: 1900, protein: 95, carbs: 100, fat: 30, sugar: 0, sodium: 0 })],
+      totals: { calories: 1900, protein: 95, carbs: 100, fat: 30 },
+    });
+    getGoals.mockResolvedValue({ calories: 2000, protein: 100, carbs: 200, fat: 50 });
+
+    const result = await computeHealthScore("2026-07-06");
+
+    // calories: |1900-2000|/2000=0.05 (hit), protein: |95-100|/100=0.05 (hit)
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.message).toBe("Solid day — you hit both your calorie and protein goals!");
+    }
+  });
+
+  it("calories missed, protein hit -> 'Good protein today — keep an eye on your calorie goal.'", async () => {
+    await upsertHealthScoreSettings(messageOnlySettings);
+    getLogsByDate.mockResolvedValue({
+      entries: [makeEntry({ calories: 1000, protein: 95, carbs: 100, fat: 30, sugar: 0, sodium: 0 })],
+      totals: { calories: 1000, protein: 95, carbs: 100, fat: 30 },
+    });
+    getGoals.mockResolvedValue({ calories: 2000, protein: 100, carbs: 200, fat: 50 });
+
+    const result = await computeHealthScore("2026-07-06");
+
+    // calories: |1000-2000|/2000=0.5 (not hit), protein: |95-100|/100=0.05 (hit)
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.message).toBe("Good protein today — keep an eye on your calorie goal.");
+    }
+  });
+
+  it("is null when goals aren't set", async () => {
+    await upsertHealthScoreSettings(messageOnlySettings);
+    getLogsByDate.mockResolvedValue({
+      entries: [makeEntry({ sugar: 0, sodium: 0 })],
+      totals: { calories: 100, protein: 10, carbs: 10, fat: 5 },
+    });
+    getGoals.mockResolvedValue(null);
+
+    const result = await computeHealthScore("2026-07-06");
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.message).toBeNull();
+    }
+  });
+
+  it("is null when there are no log entries that day, even with goals set", async () => {
+    // Isolate via variety instead of sugarSodium here, since sugarSodium
+    // requires entries on the requested day to be computable at all — using
+    // it would collapse straight to "insufficient_data" rather than
+    // exercising the message's own entries-empty branch. Variety's 7-day
+    // window lets another day carry an entry so the composite is still
+    // computable while the requested day itself has none.
+    await upsertHealthScoreSettings({
+      ...fullSettings,
+      processingEnabled: false,
+      macroFitEnabled: false,
+      sugarSodiumEnabled: false,
+      varietyEnabled: true,
+    });
+    getLogsByDate.mockImplementation(async (date) => {
+      if (date === "2026-07-06") return emptyLogsForDate();
+      if (date === "2026-06-30") {
+        return {
+          entries: [makeEntry({ foodId: 1 })],
+          totals: { calories: 0, protein: 0, carbs: 0, fat: 0 },
+        };
+      }
+      return emptyLogsForDate();
+    });
+    getFoodById.mockResolvedValue(makeFood({ id: 1, foodGroup: "protein" }));
+    getGoals.mockResolvedValue({ calories: 2000, protein: 100, carbs: 200, fat: 50 });
+
+    const result = await computeHealthScore("2026-07-06");
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.message).toBeNull();
+    }
+  });
+
+  it("is null when the calorie goal is 0", async () => {
+    await upsertHealthScoreSettings(messageOnlySettings);
+    getLogsByDate.mockResolvedValue({
+      entries: [makeEntry({ calories: 1900, protein: 95, sugar: 0, sodium: 0 })],
+      totals: { calories: 1900, protein: 95, carbs: 10, fat: 5 },
+    });
+    getGoals.mockResolvedValue({ calories: 0, protein: 100, carbs: 200, fat: 50 });
+
+    const result = await computeHealthScore("2026-07-06");
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.message).toBeNull();
+    }
+  });
+
+  it("is null when the protein goal is 0", async () => {
+    await upsertHealthScoreSettings(messageOnlySettings);
+    getLogsByDate.mockResolvedValue({
+      entries: [makeEntry({ calories: 1900, protein: 95, sugar: 0, sodium: 0 })],
+      totals: { calories: 1900, protein: 95, carbs: 10, fat: 5 },
+    });
+    getGoals.mockResolvedValue({ calories: 2000, protein: 0, carbs: 200, fat: 50 });
+
+    const result = await computeHealthScore("2026-07-06");
+
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.message).toBeNull();
+    }
+  });
+});
+
 describe("computeHealthScore — sugar/sodium factor", () => {
   it("averages the sugar and sodium sub-scores against their reference limits", async () => {
     await upsertHealthScoreSettings({

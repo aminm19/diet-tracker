@@ -4,6 +4,7 @@
 // `upsertFood` conflict-target/values wiring rather than just asserting the
 // mock was called. Upstream HTTP calls are mocked via a stubbed `fetch`.
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PgDialect } from "drizzle-orm/pg-core";
 import { foods } from "shared";
 
 // --- Fake DB (in-memory, mimics ON CONFLICT (source, external_id) DO UPDATE) ---
@@ -20,6 +21,11 @@ let lastConflictTarget: unknown;
 function findByKey(source: unknown, externalId: unknown): FakeRow | undefined {
   return store.find((r) => r.source === source && r.externalId === externalId);
 }
+
+// Used to compile the `or(ilike(...), ilike(...))` expression built by
+// `searchLocalCache` into `{ sql, params }` so this fake can extract the
+// `%query%` patterns without depending on drizzle's internal SQL AST shape.
+const pgDialect = new PgDialect();
 
 vi.mock("../db/client.js", () => {
   return {
@@ -41,9 +47,28 @@ vi.mock("../db/client.js", () => {
           }),
         }),
       }),
-      select: () => {
-        throw new Error("select() not supported by this fake db — not exercised by searchFoods");
-      },
+      select: () => ({
+        from: () => ({
+          where: (condition: unknown) => ({
+            limit: async (n: number) => {
+              const { params } = pgDialect.sqlToQuery(condition as Parameters<typeof pgDialect.sqlToQuery>[0]);
+              // `ilike(column, "%query%")` — strip the wildcards to recover
+              // the raw query text, then match case-insensitively against
+              // `name`/`brand`, mirroring what Postgres's ILIKE would do.
+              const pattern = String(params[0] ?? "")
+                .replace(/^%/, "")
+                .replace(/%$/, "")
+                .toLowerCase();
+              const matches = store.filter((row) => {
+                const name = String(row.name ?? "").toLowerCase();
+                const brand = String(row.brand ?? "").toLowerCase();
+                return name.includes(pattern) || brand.includes(pattern);
+              });
+              return matches.slice(0, n);
+            },
+          }),
+        }),
+      }),
     },
   };
 });
@@ -401,5 +426,162 @@ describe("searchFoods — partial-failure resilience", () => {
 
     const results = await searchFoods("anything");
     expect(results).toEqual([]);
+  });
+});
+
+describe("searchFoods — USDA foodMeasures serving size", () => {
+  it("picks the lowest-rank measure, excluding 'Quantity not specified', for a Survey (FNDDS) item", async () => {
+    installFetchMock({
+      usda: () =>
+        jsonResponse(
+          usdaResponse({
+            fdcId: 171688,
+            description: "Apple, raw",
+            dataType: "Survey (FNDDS)",
+            foodMeasures: [
+              // Present on nearly every food, and (deliberately, here) has a
+              // lower rank than the real servings — must still be excluded.
+              { disseminationText: "Quantity not specified", gramWeight: 100, rank: 0 },
+              { disseminationText: "1 cup slices", gramWeight: 125, rank: 3 },
+              { disseminationText: "1 medium", gramWeight: 200, rank: 1 },
+              { disseminationText: "1 large", gramWeight: 250, rank: 2 },
+            ],
+          }),
+        ),
+      off: () => jsonResponse({ products: [] }),
+    });
+
+    const results = await searchFoods("apple");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.servingSize).toBe(200);
+    expect(results[0]!.servingUnit).toBe("1 medium");
+  });
+
+  it("stays null when every foodMeasures entry is 'Quantity not specified'", async () => {
+    installFetchMock({
+      usda: () =>
+        jsonResponse(
+          usdaResponse({
+            fdcId: 999001,
+            description: "Mystery Survey Food",
+            dataType: "Survey (FNDDS)",
+            foodMeasures: [
+              { disseminationText: "Quantity not specified", gramWeight: 100, rank: 1 },
+              { disseminationText: "Quantity not specified", gramWeight: 100, rank: 2 },
+            ],
+          }),
+        ),
+      off: () => jsonResponse({ products: [] }),
+    });
+
+    const results = await searchFoods("mystery");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.servingSize).toBeNull();
+    expect(results[0]!.servingUnit).toBeNull();
+  });
+
+  it("stays null for a Foundation/SR Legacy item with no foodMeasures field at all", async () => {
+    installFetchMock({
+      // The default `usdaResponse()` fixture is dataType "SR Legacy" and has
+      // no `foodMeasures` field, matching real USDA behavior for that dataType.
+      usda: () => jsonResponse(usdaResponse()),
+      off: () => jsonResponse({ products: [] }),
+    });
+
+    const results = await searchFoods("chicken");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.servingSize).toBeNull();
+    expect(results[0]!.servingUnit).toBeNull();
+  });
+
+  it("stays null when foodMeasures is an empty array", async () => {
+    installFetchMock({
+      usda: () =>
+        jsonResponse(
+          usdaResponse({
+            fdcId: 999002,
+            description: "No Measures Food",
+            dataType: "Survey (FNDDS)",
+            foodMeasures: [],
+          }),
+        ),
+      off: () => jsonResponse({ products: [] }),
+    });
+
+    const results = await searchFoods("nomeasures");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.servingSize).toBeNull();
+    expect(results[0]!.servingUnit).toBeNull();
+  });
+});
+
+describe("searchFoods — read-side local cache", () => {
+  it("falls through to the live upstream path when the local cache has fewer than 5 matches", async () => {
+    // 3 pre-existing rows in the "foods" table matching "chicken" — below
+    // the LOCAL_CACHE_MIN_RESULTS=5 threshold.
+    store.push(
+      { id: 1, source: "usda", externalId: "1", name: "Chicken breast" },
+      { id: 2, source: "usda", externalId: "2", name: "Chicken thigh" },
+      { id: 3, source: "usda", externalId: "3", name: "Chicken wing" },
+    );
+    nextId = 4;
+
+    installFetchMock({
+      usda: () => jsonResponse(usdaResponse()),
+      off: () => jsonResponse({ products: [] }),
+    });
+
+    const results = await searchFoods("chicken");
+    expect(results).toHaveLength(1);
+    expect(results[0]!.source).toBe("usda");
+    expect(fetch).toHaveBeenCalled();
+  });
+
+  it("skips both upstream calls entirely when the local cache already has 5+ matches", async () => {
+    store.push(
+      { id: 1, source: "usda", externalId: "1", name: "Chicken breast" },
+      { id: 2, source: "usda", externalId: "2", name: "Chicken thigh" },
+      { id: 3, source: "usda", externalId: "3", name: "Chicken wing" },
+      { id: 4, source: "usda", externalId: "4", name: "Chicken drumstick" },
+      { id: 5, source: "off", externalId: "5", name: "Chicken Nuggets", brand: "Acme" },
+    );
+    nextId = 6;
+
+    installFetchMock({
+      usda: () => {
+        throw new Error("USDA should not be called when local cache is sufficient");
+      },
+      off: () => {
+        throw new Error("OFF should not be called when local cache is sufficient");
+      },
+    });
+
+    const results = await searchFoods("chicken");
+    expect(results).toHaveLength(5);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("matches case-insensitively against brand as well as name", async () => {
+    store.push(
+      { id: 1, source: "off", externalId: "1", name: "Snack Bar", brand: "GRANOLA CO" },
+      { id: 2, source: "off", externalId: "2", name: "Snack Bar 2", brand: "GRANOLA CO" },
+      { id: 3, source: "off", externalId: "3", name: "Snack Bar 3", brand: "GRANOLA CO" },
+      { id: 4, source: "off", externalId: "4", name: "Snack Bar 4", brand: "GRANOLA CO" },
+      { id: 5, source: "off", externalId: "5", name: "Snack Bar 5", brand: "GRANOLA CO" },
+    );
+    nextId = 6;
+
+    installFetchMock({
+      usda: () => {
+        throw new Error("should not be called");
+      },
+      off: () => {
+        throw new Error("should not be called");
+      },
+    });
+
+    const results = await searchFoods("granola");
+    expect(results).toHaveLength(5);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

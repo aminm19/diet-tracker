@@ -57,7 +57,11 @@ export type HealthScoreFactorResult = z.infer<typeof healthScoreFactorResultSche
 //   misleading 0 or 100.
 // - "ok": a real composite `score` (0-100), plus a per-factor breakdown.
 //   Any factor that was disabled or not computable for this date is `null`
-//   in `factors`.
+//   in `factors`. `message` is a short, hardcoded diet message derived
+//   directly from the day's calorie/protein totals vs. goals — independent
+//   of the four scored factors (and of `settings.macroFitEnabled`), so it's
+//   `null` whenever goals aren't set, there are no log entries that day, or
+//   either the calorie or protein goal is 0.
 export const healthScoreResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("hidden") }),
   z.object({ status: z.literal("insufficient_data") }),
@@ -70,6 +74,7 @@ export const healthScoreResultSchema = z.discriminatedUnion("status", [
       sugarSodium: healthScoreFactorResultSchema.nullable(),
       variety: healthScoreFactorResultSchema.nullable(),
     }),
+    message: z.string().nullable(),
   }),
 ]);
 export type HealthScoreResult = z.infer<typeof healthScoreResultSchema>;

@@ -3,6 +3,7 @@ import { type FormEvent, useEffect, useRef, useState } from "react";
 import type { HealthScoreFactorKey, HealthScoreSettings } from "shared";
 import { ApiError, getHealthScoreSettings, updateHealthScoreSettings } from "../lib/api";
 import { useModal } from "../hooks/useModal";
+import { FACTORS } from "../lib/healthScoreFactors";
 import { Button } from "./ui/Button";
 import { Card } from "./ui/Card";
 import { IconButton } from "./ui/IconButton";
@@ -11,35 +12,6 @@ interface HealthScoreSettingsModalProps {
   onClose: () => void;
   onSaved: (settings: HealthScoreSettings) => void;
 }
-
-interface FactorConfig {
-  key: HealthScoreFactorKey;
-  label: string;
-  description: string;
-}
-
-const FACTORS: FactorConfig[] = [
-  {
-    key: "processing",
-    label: "Whole-food vs. processed",
-    description: "Based on NOVA classification.",
-  },
-  {
-    key: "macroFit",
-    label: "Macro fit vs. goals",
-    description: "How close the day's macros land to your goals.",
-  },
-  {
-    key: "sugarSodium",
-    label: "Sugar / sodium levels",
-    description: "Penalizes high sugar and sodium intake.",
-  },
-  {
-    key: "variety",
-    label: "Food-group variety",
-    description: "Rewards eating from a range of food groups.",
-  },
-];
 
 interface FormState {
   masterEnabled: boolean;

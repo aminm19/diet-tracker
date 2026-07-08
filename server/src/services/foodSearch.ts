@@ -1,7 +1,7 @@
 // Fetches food data from USDA FDC + Open Food Facts, normalizes both into
 // the shared `Food` shape, and caches results into the `foods` table
 // (deduped by `source` + `external_id`).
-import { eq } from "drizzle-orm";
+import { eq, ilike, or } from "drizzle-orm";
 import type { Food, FoodGroup, FoodSource, NormalizedFoodInput } from "shared";
 import { foods } from "shared";
 import { db } from "../db/client.js";
@@ -12,6 +12,10 @@ const USDA_SEARCH_URL = "https://api.nal.usda.gov/fdc/v1/foods/search";
 const OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl";
 // Open Food Facts asks integrators to identify their app in the User-Agent.
 const OFF_USER_AGENT = "DietTrackerV1/1.0";
+
+// If our own `foods` table already has at least this many matches for a
+// query, skip both upstream calls entirely and serve from the local cache.
+const LOCAL_CACHE_MIN_RESULTS = 5;
 
 // A normalized result plus the raw upstream record, prior to being upserted
 // (and thus not yet assigned an internal DB id). `foodGroup` is omitted here
@@ -40,10 +44,20 @@ interface UsdaNutrient {
   value?: number;
 }
 
+interface UsdaFoodMeasure {
+  disseminationText: string;
+  gramWeight: number;
+  rank?: number;
+}
+
 interface UsdaFoodItem {
   fdcId: number;
   description: string;
   foodNutrients: UsdaNutrient[];
+  // Only present on `Survey (FNDDS)` dataType items — consumer-facing
+  // portion sizes (e.g. "1 medium", "1 cup"). Absent on Foundation/SR Legacy
+  // items, which are lab-analysis entries with no natural serving.
+  foodMeasures?: UsdaFoodMeasure[];
 }
 
 interface UsdaSearchResponse {
@@ -53,6 +67,28 @@ interface UsdaSearchResponse {
 function usdaNutrientValue(item: UsdaFoodItem, nutrientNumber: string): number | null {
   const nutrient = item.foodNutrients.find((n) => n.nutrientNumber === nutrientNumber);
   return typeof nutrient?.value === "number" ? nutrient.value : null;
+}
+
+// Picks the most natural serving size from a USDA item's `foodMeasures`.
+// "Quantity not specified" appears on nearly every food and isn't a
+// meaningful default, so it's excluded; among what's left, the lowest
+// `rank` tends to be the most common serving (e.g. rank 1 = "1 medium" for
+// an apple). Returns null if there's nothing usable.
+function pickUsdaServingMeasure(
+  measures: UsdaFoodMeasure[] | undefined,
+): UsdaFoodMeasure | null {
+  if (!measures || measures.length === 0) return null;
+
+  const candidates = measures.filter(
+    (m) => !m.disseminationText.startsWith("Quantity not specified"),
+  );
+  if (candidates.length === 0) return null;
+
+  return candidates.reduce((best, current) => {
+    const bestRank = best.rank ?? Number.POSITIVE_INFINITY;
+    const currentRank = current.rank ?? Number.POSITIVE_INFINITY;
+    return currentRank < bestRank ? current : best;
+  });
 }
 
 async function searchUsda(query: string): Promise<FoodUpsertInput[]> {
@@ -90,15 +126,19 @@ async function searchUsda(query: string): Promise<FoodUpsertInput[]> {
       continue;
     }
 
+    const servingMeasure = pickUsdaServingMeasure(item.foodMeasures);
+
     results.push({
       source: "usda",
       externalId: String(item.fdcId),
       name: item.description,
       brand: null,
-      // USDA's whole/generic foods don't carry a canonical serving size —
-      // nutrient values are already per 100g.
-      servingSize: null,
-      servingUnit: null,
+      // Foundation/SR Legacy items don't carry `foodMeasures` — they're
+      // lab-analysis entries, not consumer-facing, so this stays null for
+      // those. Survey (FNDDS) items do, so we surface a real "1 medium"-style
+      // serving where one is available.
+      servingSize: servingMeasure?.gramWeight ?? null,
+      servingUnit: servingMeasure?.disseminationText ?? null,
       caloriesPer100g,
       proteinPer100g,
       carbsPer100g,
@@ -269,11 +309,38 @@ async function upsertFood(item: FoodUpsertInput): Promise<Food> {
 
 // --- Public service API ---
 
+// Checks our own `foods` table before touching upstream — matches on `name`
+// or `brand` containing the query, case-insensitively.
+async function searchLocalCache(query: string): Promise<Food[]> {
+  const rows = await db
+    .select()
+    .from(foods)
+    .where(or(ilike(foods.name, `%${query}%`), ilike(foods.brand, `%${query}%`)))
+    .limit(15);
+
+  return rows.map(rowToFood);
+}
+
 // Fires both upstream searches in parallel. If one source errors (network
 // failure, non-2xx response, etc.), it's logged and the other source's
 // results are still returned — a single upstream outage never fails the
 // whole search.
+//
+// Read-side caching tradeoff: once the `foods` table already has
+// LOCAL_CACHE_MIN_RESULTS+ matches for a query, we serve straight from the
+// local cache and skip both upstream APIs entirely — this makes
+// repeat/overlapping searches fast and immune to upstream flakiness (both
+// USDA and Open Food Facts are free APIs observed to intermittently 4xx/5xx
+// or rate-limit), at the cost of not always showing the newest possible
+// upstream results for a query that's already well-cached locally. That's an
+// acceptable tradeoff given this app already treats `foods` as its cache
+// (see root CLAUDE.md).
 export async function searchFoods(query: string): Promise<Food[]> {
+  const localResults = await searchLocalCache(query);
+  if (localResults.length >= LOCAL_CACHE_MIN_RESULTS) {
+    return localResults;
+  }
+
   const [usdaResult, offResult] = await Promise.allSettled([
     searchUsda(query),
     searchOff(query),

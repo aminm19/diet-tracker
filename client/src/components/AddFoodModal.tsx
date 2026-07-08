@@ -13,6 +13,18 @@ interface AddFoodModalProps {
   onAdded: (entry: LogEntry, food: Food) => void;
 }
 
+// Mirrors `gramsForAmount` in `server/src/services/logs.ts` so the live
+// preview here matches exactly what gets snapshotted on submit.
+const OZ_TO_GRAMS = 28.3495;
+
+function gramsForAmount(amount: number, unit: LogUnit, food: Food): number | null {
+  if (unit === "g") return amount;
+  if (unit === "oz") return amount * OZ_TO_GRAMS;
+  // unit === "serving"
+  if (food.servingSize === null) return null;
+  return amount * food.servingSize;
+}
+
 // Mounted by the parent only while open (`{modalOpen && <AddFoodModal ... />}`)
 // so every open is a fresh mount — state starts at its initial values with
 // no manual "reset on open" effect needed.
@@ -100,6 +112,29 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
     }
   }
 
+  // Live nutrition preview for the currently selected amount/unit. Falls back
+  // to the per-100g reference numbers whenever the amount doesn't parse to a
+  // valid positive number (same validity check `handleSubmit` uses).
+  const parsedAmount = Number(amount);
+  const isAmountValid = Number.isFinite(parsedAmount) && parsedAmount > 0;
+  const grams = selectedFood && isAmountValid ? gramsForAmount(parsedAmount, unit, selectedFood) : null;
+  const summary = selectedFood
+    ? grams !== null
+      ? {
+          calories: selectedFood.caloriesPer100g * (grams / 100),
+          protein: selectedFood.proteinPer100g * (grams / 100),
+          carbs: selectedFood.carbsPer100g * (grams / 100),
+          fat: selectedFood.fatPer100g * (grams / 100),
+        }
+      : {
+          calories: selectedFood.caloriesPer100g,
+          protein: selectedFood.proteinPer100g,
+          carbs: selectedFood.carbsPer100g,
+          fat: selectedFood.fatPer100g,
+        }
+    : null;
+  const summaryIsPer100g = summary !== null && grams === null;
+
   return (
     <div
       className={`fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xl transition-opacity duration-300 ease-[cubic-bezier(0.32,0.72,0,1)] ${
@@ -132,9 +167,16 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
               <div className="rounded-2xl bg-black/[0.03] p-4 ring-1 ring-black/5">
                 <p className="font-display text-base font-semibold text-ink">{selectedFood.name}</p>
                 {selectedFood.brand && <p className="text-sm text-muted">{selectedFood.brand}</p>}
-                <p className="mt-1 text-xs font-medium text-muted">
-                  {Math.round(selectedFood.caloriesPer100g)} kcal / 100g
-                </p>
+                {summary && (
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-medium text-muted">
+                    <span>
+                      {Math.round(summary.calories)} kcal{summaryIsPer100g ? " / 100g" : ""}
+                    </span>
+                    <span>{Math.round(summary.protein)}g protein</span>
+                    <span>{Math.round(summary.carbs)}g carbs</span>
+                    <span>{Math.round(summary.fat)}g fat</span>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-wrap items-end gap-3">
@@ -175,10 +217,14 @@ export function AddFoodModal({ date, onClose, onAdded }: AddFoodModalProps) {
                 </fieldset>
               </div>
 
-              {selectedFood.servingSize == null && (
+              {selectedFood.servingSize == null ? (
                 <p className="-mt-2 text-xs text-muted">
                   No serving size on record for this food — log it by weight (g/oz) instead.
                 </p>
+              ) : (
+                selectedFood.servingUnit != null && (
+                  <p className="-mt-2 text-xs text-muted">serving = {selectedFood.servingUnit}</p>
+                )
               )}
 
               {submitError && (
