@@ -372,13 +372,14 @@ describe("HealthScoreBadge — breakdown popover", () => {
     expect(button).toHaveAttribute("aria-expanded", "true");
   });
 
-  it("opens on hover and closes on mouse-leave", async () => {
+  it("opens on hover and closes once the mouse leaves the button+popover region", async () => {
     const button = await renderOpenable(okResult(60));
+    const container = button.parentElement!;
 
-    fireEvent.mouseEnter(button);
+    fireEvent.mouseEnter(container);
     expect(button).toHaveAttribute("aria-expanded", "true");
 
-    fireEvent.mouseLeave(button);
+    fireEvent.mouseLeave(container);
     expect(button).toHaveAttribute("aria-expanded", "false");
   });
 

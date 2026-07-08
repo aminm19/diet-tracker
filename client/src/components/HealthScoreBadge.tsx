@@ -214,7 +214,20 @@ export function HealthScoreBadge({ date, refreshKey, totals }: HealthScoreBadgeP
   const band = scoreBand(rounded);
 
   return (
-    <div ref={containerRef} className="relative inline-flex">
+    <div
+      ref={containerRef}
+      className="relative inline-flex"
+      onMouseEnter={openFromHover}
+      onMouseLeave={closeFromHoverLeave}
+    >
+      {/* Hover handlers live on this wrapping container, not the button —
+          the popover is a sibling positioned below the button, so hovering
+          from the button down into the popover briefly leaves the button's
+          own bounding box. Handlers on the button alone would fire
+          `mouseleave` at that moment and close the popover the instant the
+          user tries to read it. Attaching them to the container instead
+          means the popover stays open across the whole button+popover
+          region, only closing once the mouse actually leaves both. */}
       {/* A real `<button>` (not the plain `<div>` this used to be) so the
           breakdown popover is reachable and toggleable via mouse, touch, and
           keyboard alike. The old `role="status"` announced content changes
@@ -232,8 +245,6 @@ export function HealthScoreBadge({ date, refreshKey, totals }: HealthScoreBadgeP
         aria-haspopup="true"
         aria-label={`Health score ${rounded} out of 100, ${band.label}`}
         onClick={toggleFromClick}
-        onMouseEnter={openFromHover}
-        onMouseLeave={closeFromHoverLeave}
         className="flex items-center gap-2 rounded-full bg-black/[0.04] py-1 pl-1 pr-3 transition-colors duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:bg-black/[0.07] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
       >
         <span aria-live="polite" className="sr-only">
