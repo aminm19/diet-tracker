@@ -65,7 +65,7 @@ describe("App — design tokens", () => {
   it("uses the text-ink token (not an ad-hoc black opacity) for the goals button's hover state", async () => {
     render(<App />);
     await waitFor(() => expect(mockGetGoals).toHaveBeenCalledTimes(1));
-    const goalsButton = screen.getByRole("button", { name: /Set goals/ });
+    const goalsButton = screen.getByRole("button", { name: /Edit goals/ });
     expect(goalsButton.className).toContain("hover:text-ink");
     expect(goalsButton.className).not.toContain("hover:text-black/60");
   });
@@ -81,13 +81,18 @@ describe("App — goals wiring on mount", () => {
     await waitFor(() => expect(screen.queryByText("Set goals to track progress →")).not.toBeInTheDocument());
   });
 
-  it("calls getGoals on mount and falls back to null when goals are unset", async () => {
+  it("falls back to sensible default goals (2000/150/200/65) when a visitor hasn't set their own yet", async () => {
     mockGetGoals.mockResolvedValue(null);
     render(<App />);
 
     await waitFor(() => expect(mockGetGoals).toHaveBeenCalledTimes(1));
-    expect(screen.getByRole("button", { name: /Set goals/ })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("Set goals to track progress →")).toBeInTheDocument());
+    // Defaults are applied, so the button reads "Edit goals" (not "Set
+    // goals") and the "no goals set" nudge never shows.
+    expect(screen.getByRole("button", { name: /Edit goals/ })).toBeInTheDocument();
+    expect(screen.queryByText("Set goals to track progress →")).not.toBeInTheDocument();
+
+    // The actual default values render through to the progress display.
+    expect(screen.getByText("/ 2,000")).toBeInTheDocument();
   });
 
   it("keeps goals as null (soft-fail) when getGoals rejects, without a page-level error", async () => {
@@ -107,7 +112,7 @@ describe("App — goals modal open/close", () => {
     render(<App />);
 
     await waitFor(() => expect(mockGetGoals).toHaveBeenCalledTimes(1));
-    await user.click(screen.getByRole("button", { name: /Set goals/ }));
+    await user.click(screen.getByRole("button", { name: /Edit goals/ }));
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
 
@@ -124,7 +129,7 @@ describe("App — goals modal open/close", () => {
     render(<App />);
 
     await waitFor(() => expect(mockGetGoals).toHaveBeenCalledTimes(1));
-    await user.click(screen.getByRole("button", { name: /Set goals/ }));
+    await user.click(screen.getByRole("button", { name: /Edit goals/ }));
 
     const inputs = screen.getAllByRole("spinbutton");
     const values = ["1800", "140", "180", "60"];

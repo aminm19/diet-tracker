@@ -13,6 +13,11 @@ import { useDailyLog } from "./hooks/useDailyLog";
 import { getGoals } from "./lib/api";
 import { todayString } from "./lib/date";
 
+// Starting-point goals for a visitor who hasn't set their own yet — roughly
+// a 30/40/30 protein/carb/fat split of 2000 kcal (150g protein = 600 kcal,
+// 200g carbs = 800 kcal, 65g fat = 585 kcal).
+const DEFAULT_GOALS: Goals = { calories: 2000, protein: 150, carbs: 200, fat: 65 };
+
 function App() {
   const [date, setDate] = useState(todayString());
   const [modalOpen, setModalOpen] = useState(false);
@@ -37,7 +42,13 @@ function App() {
   useEffect(() => {
     const controller = new AbortController();
     getGoals(controller.signal)
-      .then(setGoals)
+      // A new visitor has no goals row yet (`getGoals` returns `null`) — fall
+      // back to a sensible starting point (roughly a 30/40/30
+      // protein/carb/fat split of 2000 kcal) rather than an empty progress
+      // bar, so logging food is immediately visible as progress. Purely a
+      // local default: nothing is written to the server until the user
+      // actually saves via `GoalsModal`, at which point it's their own.
+      .then((fetchedGoals) => setGoals(fetchedGoals ?? DEFAULT_GOALS))
       .catch(() => {
         // Goals are a soft-fail feature (DaySummary already renders a "no
         // goals" fallback) — silently keep `goals` at its initial `null`
