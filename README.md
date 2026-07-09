@@ -2,6 +2,10 @@
 
 A full-stack diet tracker — food search, daily logging, macro/calorie goals, and a configurable health score, backed by real nutrition data instead of a hand-maintained food database.
 
+**[Live demo →](https://diet-tracker-client.vercel.app/)**
+
+![Diet Tracker](./screenshots/Screenshot1.png)
+
 ## Stack
 
 - **Frontend:** React, Vite, TypeScript, Tailwind CSS
@@ -16,7 +20,9 @@ Food search aggregates two upstream sources — USDA FoodData Central for whole/
 
 Both upstream APIs are free tiers and observably flaky under load (rate-limiting, transient 5xx). Search checks the local `foods` cache first and only falls back to a live upstream call when there aren't enough cached matches for the query — repeat and overlapping searches become fast and immune to that flakiness once a term is well-cached, at the cost of not always surfacing the newest possible upstream result for an already-cached term.
 
-The health score is a weighted 0–100 composite over four independently toggleable factors (whole-food/processed via NOVA classification, macro fit vs. goals, sugar/sodium levels, food-group variety). Each factor is excluded from the composite — with the remaining factors' weights renormalized to fill the gap — whenever it's disabled or has no computable data for the day (e.g. macro-fit needs goals to be set; variety needs at least one logged food in a rolling 7-day window, since a single day's 2–4 items is too sparse a sample on its own). Goals and health-score settings are both single-row "singleton" tables behind the same get-or-create/upsert pattern, since this is a single-implicit-user app with no accounts.
+The health score is a weighted 0–100 composite over four independently toggleable factors (whole-food/processed via NOVA classification, macro fit vs. goals, sugar/sodium levels, food-group variety). Each factor is excluded from the composite — with the remaining factors' weights renormalized to fill the gap — whenever it's disabled or has no computable data for the day (e.g. macro-fit needs goals to be set; variety needs at least one logged food in a rolling 7-day window, since a single day's 2–4 items is too sparse a sample on its own).
+
+There's no login. Each visitor is identified by a random ID generated on first visit and stored in `localStorage` — the only thing the client keeps client-side; logs, goals, and health-score settings all still live in Postgres, scoped to that ID, so different visitors never see each other's data. Goals and health-score settings are single-row-per-visitor tables behind a get-or-create/upsert pattern rather than real user accounts.
 
 ## API
 
