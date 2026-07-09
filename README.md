@@ -1,6 +1,6 @@
 # Diet Tracker
 
-A full-stack diet tracker — food search, daily logging, macro/calorie goals, and a configurable health score, backed by real nutrition data instead of a hand-maintained food database.
+A full-stack diet tracker — food search, daily logging, macro/calorie goals, and a configurable health score, backed by real nutrition data.
 
 **[Live demo →](https://diet-tracker-client.vercel.app/)**
 
